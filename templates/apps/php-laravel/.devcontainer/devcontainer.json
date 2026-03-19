@@ -1,0 +1,20 @@
+{
+    "name": "DevStack App (PHP/Laravel)",
+    "dockerComposeFile": ["../../../.generated/docker-compose.yml"],
+    "service": "app",
+    "workspaceFolder": "/var/www/html",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "bmewburn.vscode-intelephense-client",
+                "shufo.vscode-blade-formatter",
+                "onecentlin.laravel-blade",
+                "ms-playwright.playwright"
+            ],
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    },
+    "postAttachCommand": "echo 'Connected to DevStack app container'"
+}

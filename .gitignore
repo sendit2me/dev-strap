@@ -1,0 +1,16 @@
+# Generated files — rebuilt on every `devstack.sh start`
+.generated/
+
+#vs-code user files
+.extensions
+.user-data
+
+# Test results — transient, reproducible from mocks
+tests/results/
+
+# Node modules inside app (built in container)
+app/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db

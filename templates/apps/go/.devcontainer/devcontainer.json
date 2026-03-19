@@ -1,0 +1,19 @@
+{
+    "name": "DevStack App (Go)",
+    "dockerComposeFile": ["../../../.generated/docker-compose.yml"],
+    "service": "app",
+    "workspaceFolder": "/app",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "golang.go",
+                "ms-playwright.playwright"
+            ],
+            "settings": {
+                "go.toolsManagement.autoUpdate": true,
+                "terminal.integrated.defaultProfile.linux": "sh"
+            }
+        }
+    },
+    "postAttachCommand": "echo 'Connected to DevStack app container'"
+}

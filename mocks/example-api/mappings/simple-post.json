@@ -1,0 +1,21 @@
+{
+    "name": "Simple POST — create an item",
+    "request": {
+        "method": "POST",
+        "url": "/v1/items"
+    },
+    "response": {
+        "status": 201,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "id": "item_new",
+            "name": "Created Item",
+            "price": 0.00,
+            "created_at": "{{now format='yyyy-MM-dd\\'T\\'HH:mm:ss\\'Z\\''}}",
+            "_note": "This response uses WireMock's response templating for the timestamp"
+        },
+        "transformers": ["response-template"]
+    }
+}

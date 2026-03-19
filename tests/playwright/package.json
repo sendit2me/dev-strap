@@ -1,0 +1,12 @@
+{
+  "name": "devstack-tests",
+  "version": "1.0.0",
+  "description": "DevStack E2E tests",
+  "scripts": {
+    "test": "playwright test",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0"
+  }
+}

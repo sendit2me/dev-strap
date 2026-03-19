@@ -1,0 +1,20 @@
+{
+    "name": "DevStack App (Node.js)",
+    "dockerComposeFile": ["../../../.generated/docker-compose.yml"],
+    "service": "app",
+    "workspaceFolder": "/app",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "dbaeumer.vscode-eslint",
+                "esbenp.prettier-vscode",
+                "ms-playwright.playwright"
+            ],
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    },
+    "forwardPorts": [3000],
+    "postAttachCommand": "echo 'Connected to DevStack app container'"
+}

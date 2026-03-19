@@ -1,0 +1,15 @@
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ${PROJECT_NAME}-mailpit
+    ports:
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    networks:
+      - ${PROJECT_NAME}-internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

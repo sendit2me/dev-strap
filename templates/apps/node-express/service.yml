@@ -1,0 +1,24 @@
+  app:
+    build:
+      context: ${APP_SOURCE}
+      dockerfile: Dockerfile
+    container_name: ${PROJECT_NAME}-app
+    volumes:
+      - ${APP_SOURCE}:/app
+      - /app/node_modules
+      - ${PROJECT_NAME}-certs:/certs:ro
+    working_dir: /app
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - NODE_EXTRA_CA_CERTS=/certs/ca.crt
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    depends_on:
+      cert-gen:
+        condition: service_completed_successfully
+    networks:
+      - ${PROJECT_NAME}-internal

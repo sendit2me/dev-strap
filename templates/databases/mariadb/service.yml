@@ -1,0 +1,17 @@
+  db:
+    image: mariadb:10.11
+    container_name: ${PROJECT_NAME}-db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ${PROJECT_NAME}-db-data:/var/lib/mysql
+    networks:
+      - ${PROJECT_NAME}-internal
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20

@@ -1,0 +1,28 @@
+{
+    "name": "Conditional: High-value payment requires review",
+    "priority": 1,
+    "request": {
+        "method": "POST",
+        "url": "/v1/charges",
+        "bodyPatterns": [
+            {
+                "matchesJsonPath": {
+                    "expression": "$.amount",
+                    "matches": "[1-9][0-9]{4,}"
+                }
+            }
+        ]
+    },
+    "response": {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "id": "ch_mock_review",
+            "status": "requires_review",
+            "reason": "Amount exceeds automatic approval threshold (>= 10000 cents)",
+            "review_url": "https://dashboard.payment-provider.com/review/ch_mock_review"
+        }
+    }
+}

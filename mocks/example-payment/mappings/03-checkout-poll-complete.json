@@ -1,0 +1,27 @@
+{
+    "name": "Stateful: Poll checkout — complete (Processing → Started, resets flow)",
+    "scenarioName": "payment-checkout-flow",
+    "requiredScenarioState": "Processing",
+    "newScenarioState": "Started",
+    "request": {
+        "method": "GET",
+        "urlPattern": "/v1/checkout/sessions/.*"
+    },
+    "response": {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "id": "cs_mock_12345",
+            "status": "complete",
+            "payment_status": "paid",
+            "amount_total": 4999,
+            "currency": "usd",
+            "metadata": {
+                "order_id": "ord_mock_001",
+                "user_id": "usr_mock_001"
+            }
+        }
+    }
+}

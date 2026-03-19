@@ -1,0 +1,21 @@
+{
+    "name": "Simple GET — returns a list of items",
+    "request": {
+        "method": "GET",
+        "url": "/v1/items"
+    },
+    "response": {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "items": [
+                { "id": "item_001", "name": "Widget A", "price": 9.99 },
+                { "id": "item_002", "name": "Widget B", "price": 19.99 },
+                { "id": "item_003", "name": "Widget C", "price": 29.99 }
+            ],
+            "total": 3
+        }
+    }
+}

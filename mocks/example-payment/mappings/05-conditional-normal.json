@@ -1,0 +1,20 @@
+{
+    "name": "Conditional: Normal payment auto-approved (fallback, lower priority)",
+    "priority": 5,
+    "request": {
+        "method": "POST",
+        "url": "/v1/charges"
+    },
+    "response": {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "id": "ch_mock_approved",
+            "status": "succeeded",
+            "amount_captured": true,
+            "receipt_url": "https://receipts.payment-provider.com/ch_mock_approved"
+        }
+    }
+}

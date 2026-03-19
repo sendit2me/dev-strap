@@ -1,0 +1,13 @@
+{
+  "name": "devstack-example-app",
+  "version": "1.0.0",
+  "description": "Example app demonstrating DevStack mock interception",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

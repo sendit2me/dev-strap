@@ -1,0 +1,23 @@
+  app:
+    build:
+      context: ${APP_SOURCE}
+      dockerfile: Dockerfile
+    container_name: ${PROJECT_NAME}-app
+    volumes:
+      - ${APP_SOURCE}:/var/www/html
+      - ${PROJECT_NAME}-certs:/certs:ro
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - APP_URL=http://${PROJECT_NAME}.local
+      - DB_CONNECTION=mysql
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_DATABASE=${DB_NAME}
+      - DB_USERNAME=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    depends_on:
+      cert-gen:
+        condition: service_completed_successfully
+    networks:
+      - ${PROJECT_NAME}-internal

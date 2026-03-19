@@ -1,0 +1,22 @@
+{
+    "name": "Stateful: Create checkout session (Started → Pending)",
+    "scenarioName": "payment-checkout-flow",
+    "requiredScenarioState": "Started",
+    "newScenarioState": "Pending",
+    "request": {
+        "method": "POST",
+        "url": "/v1/checkout/sessions"
+    },
+    "response": {
+        "status": 201,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "id": "cs_mock_12345",
+            "status": "pending",
+            "payment_url": "https://pay.payment-provider.com/cs_mock_12345",
+            "expires_at": "2099-12-31T23:59:59Z"
+        }
+    }
+}

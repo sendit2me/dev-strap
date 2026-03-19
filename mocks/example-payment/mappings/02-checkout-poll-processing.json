@@ -1,0 +1,21 @@
+{
+    "name": "Stateful: Poll checkout — processing (Pending → Processing)",
+    "scenarioName": "payment-checkout-flow",
+    "requiredScenarioState": "Pending",
+    "newScenarioState": "Processing",
+    "request": {
+        "method": "GET",
+        "urlPattern": "/v1/checkout/sessions/.*"
+    },
+    "response": {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "id": "cs_mock_12345",
+            "status": "processing",
+            "payment_status": "requires_action"
+        }
+    }
+}
