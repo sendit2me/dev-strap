@@ -182,9 +182,9 @@ APP_SOURCE=./my-rust-app
 ./devstack.sh stop && ./devstack.sh start
 ```
 
-## Template for Python/FastAPI
+## Example: Python/FastAPI Template
 
-Here's a complete template for reference:
+The Rust and Python templates below are **reference examples** — copy-paste starting points, not shipped templates. DevStrap ships with `node-express`, `php-laravel`, and `go`. To add Rust or Python, create the template directory yourself following these examples:
 
 **Dockerfile:**
 

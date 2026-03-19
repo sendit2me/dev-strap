@@ -93,7 +93,8 @@ $(cat "${extra_file}" | \
             sed "s|\${PROJECT_NAME}|${PROJECT_NAME}|g" | \
             sed "s|\${DB_NAME}|${DB_NAME}|g" | \
             sed "s|\${DB_USER}|${DB_USER}|g" | \
-            sed "s|\${DB_PASSWORD}|${DB_PASSWORD}|g")"
+            sed "s|\${DB_PASSWORD}|${DB_PASSWORD}|g" | \
+            sed "s|\${MAILPIT_PORT}|${MAILPIT_PORT:-8025}|g")"
         EXTRAS_DEPENDS="${EXTRAS_DEPENDS}
       ${extra}:
         condition: service_healthy"
@@ -128,6 +129,24 @@ if [ "${DB_TYPE}" != "none" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Derive DB_PORT from DB_TYPE
+# ---------------------------------------------------------------------------
+case "${DB_TYPE}" in
+    postgres) DB_PORT=5432 ;;
+    mariadb)  DB_PORT=3306 ;;
+    *)        DB_PORT=3306 ;;
+esac
+
+# ---------------------------------------------------------------------------
+# App-type-specific volumes
+# ---------------------------------------------------------------------------
+APP_VOLUMES=""
+if [ "${APP_TYPE}" = "go" ]; then
+    APP_VOLUMES="
+  ${PROJECT_NAME}-go-modules:"
+fi
+
+# ---------------------------------------------------------------------------
 # Build app service from template
 # ---------------------------------------------------------------------------
 APP_SERVICE=""
@@ -139,6 +158,7 @@ if [ -f "${app_template}" ]; then
         sed "s|\${PROJECT_NAME}|${PROJECT_NAME}|g" | \
         sed "s|\${APP_SOURCE}|${APP_SOURCE_ABS}|g" | \
         sed "s|\${DB_TYPE}|${DB_TYPE}|g" | \
+        sed "s|\${DB_PORT}|${DB_PORT}|g" | \
         sed "s|\${DB_NAME}|${DB_NAME}|g" | \
         sed "s|\${DB_USER}|${DB_USER}|g" | \
         sed "s|\${DB_PASSWORD}|${DB_PASSWORD}|g" | \
@@ -244,7 +264,7 @@ ${WIREMOCK_MAPPING_VOLUMES}${WIREMOCK_FILES_VOLUMES}      - ${PROJECT_NAME}-cert
     networks:
       - ${PROJECT_NAME}-internal
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/__admin/"]
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/__admin/"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -308,14 +328,14 @@ cat >> "${OUTPUT_FILE}" <<COMPOSE_TESTER
   # Test Dashboard — view reports in browser
   # ---------------------------------------------------------------------------
   test-dashboard:
-    image: python:3.11-slim
+    image: busybox:latest
     container_name: ${PROJECT_NAME}-test-dashboard
     ports:
       - "${TEST_DASHBOARD_PORT}:8080"
     volumes:
       - ${DEVSTACK_DIR}/tests/results:/results:ro
     working_dir: /results
-    command: python -m http.server 8080
+    command: httpd -f -p 8080 -h /results
     networks:
       - ${PROJECT_NAME}-internal
 
@@ -339,8 +359,7 @@ networks:
 # Volumes
 # =============================================================================
 volumes:
-  ${PROJECT_NAME}-certs:${DB_VOLUMES}
-  ${PROJECT_NAME}-go-modules:
+  ${PROJECT_NAME}-certs:${DB_VOLUMES}${APP_VOLUMES}
 COMPOSE_FOOTER
 
 echo "[compose-gen] Generated ${OUTPUT_FILE}"

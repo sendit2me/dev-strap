@@ -143,7 +143,9 @@ All templates include `.devcontainer/` config for VS Code.
 ./devstack.sh new-mock <name> <domain>  Scaffold a new mock service
 ./devstack.sh record <mock>      Record real API responses as mock mappings
 ./devstack.sh apply-recording <mock>  Apply recorded mappings (with path fixup)
-./devstack.sh generate           Regenerate config without starting
+./devstack.sh verify-mocks           Check all mocked domains are reachable
+./devstack.sh init                   Interactive project setup wizard
+./devstack.sh generate               Regenerate config without starting
 ```
 
 ## Documentation

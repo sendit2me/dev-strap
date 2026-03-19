@@ -11,9 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# NOTE: The DevStack CA cert is mounted at /certs/ca.crt at runtime (not build time).
-# To trust it, add this to your init.sh:
-#   cp /certs/ca.crt /usr/local/share/ca-certificates/devstack-ca.crt && update-ca-certificates
+# Entrypoint that auto-trusts the DevStack CA cert if mounted at /certs/ca.crt
+RUN printf '#!/bin/sh\n\
+if [ -f /certs/ca.crt ]; then\n\
+    cp /certs/ca.crt /usr/local/share/ca-certificates/devstack-ca.crt\n\
+    update-ca-certificates 2>/dev/null\n\
+fi\n\
+exec "$@"\n' > /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /var/www/html
 COPY . .
@@ -21,4 +25,5 @@ COPY . .
 RUN composer install --no-interaction --prefer-dist --optimize-autoloader 2>/dev/null || true
 
 EXPOSE 9000
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["php-fpm"]

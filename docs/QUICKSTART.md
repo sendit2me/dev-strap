@@ -65,8 +65,10 @@ See [PROJECT_SETUP.md](PROJECT_SETUP.md) for the full walkthrough.
 ./devstack.sh reload-mocks                # Hot-reload mappings (no restart needed)
 ./devstack.sh record stripe               # Record real API responses as mock mappings
 ./devstack.sh apply-recording stripe      # Apply recorded mappings into mock
+./devstack.sh verify-mocks                # Check all mocked domains work
 
 # Config
+./devstack.sh init                        # Interactive project setup wizard
 ./devstack.sh generate                    # Regenerate config without starting
 ./devstack.sh help                        # Show help
 ```

@@ -13,7 +13,7 @@
       - PORT=3000
       - NODE_EXTRA_CA_CERTS=/certs/ca.crt
       - DB_HOST=db
-      - DB_PORT=3306
+      - DB_PORT=${DB_PORT}
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}

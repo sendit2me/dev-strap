@@ -402,7 +402,7 @@ cmd_mocks() {
     log "  1. mkdir -p mocks/<name>/mappings"
     log "  2. echo 'api.domain.com' > mocks/<name>/domains"
     log "  3. Add WireMock JSON mappings to mocks/<name>/mappings/"
-    log "  4. Run './devstack.sh stop && ./devstack.sh start'"
+    log "  4. Run './devstack.sh restart'"
 }
 
 # ---------------------------------------------------------------------------
@@ -436,12 +436,13 @@ cmd_reload_mocks() {
     }
 
     # Show loaded mapping count
-    local count
-    count=$(docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
+    local mappings_response count
+    mappings_response=$(docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
         -p "${PROJECT_NAME}" \
         exec -T wiremock wget -qO- \
-        "http://localhost:8080/__admin/mappings" 2>/dev/null | \
-        grep -o '"total":[0-9]*' | head -1 | grep -o '[0-9]*') || count="?"
+        "http://localhost:8080/__admin/mappings" 2>/dev/null) || true
+    count=$(echo "${mappings_response}" | grep -o '"total" *: *[0-9]*' | grep -o '[0-9]*' | head -1)
+    count="${count:-0}"
 
     log_ok "Mock mappings reloaded (${count} mappings loaded)."
     log "Note: New domains require a full restart (./devstack.sh restart)"
@@ -712,6 +713,211 @@ cmd_apply_recording() {
 }
 
 # ---------------------------------------------------------------------------
+# Verify Mocks — check all mocked domains are reachable from inside the app
+# ---------------------------------------------------------------------------
+cmd_verify_mocks() {
+    if [ ! -f "${GENERATED_DIR}/docker-compose.yml" ]; then
+        log_err "DevStack is not running. Run './devstack.sh start' first."
+        exit 1
+    fi
+
+    log "Verifying mock interception..."
+    echo ""
+
+    local pass=0
+    local fail=0
+
+    for mock_dir in "${DEVSTACK_DIR}"/mocks/*/; do
+        [ -d "${mock_dir}" ] || continue
+        local domains_file="${mock_dir}domains"
+        [ -f "${domains_file}" ] || continue
+        local name=$(basename "${mock_dir}")
+
+        while IFS= read -r domain || [ -n "${domain}" ]; do
+            domain=$(echo "${domain}" | tr -d '[:space:]')
+            [ -z "${domain}" ] && continue
+            [[ "${domain}" == \#* ]] && continue
+
+            # Try to reach the domain from inside the app container via HTTPS
+            # --no-check-certificate: we're testing routing, not cert trust
+            local http_code
+            http_code=$(docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
+                -p "${PROJECT_NAME}" \
+                exec -T app sh -c \
+                "wget --no-check-certificate -qS --timeout=5 -O /dev/null https://${domain}/ 2>&1 | grep -o 'HTTP/[0-9.]* [0-9]*' | tail -1" 2>/dev/null) || true
+
+            if echo "${http_code}" | grep -qE "HTTP.*[0-9]"; then
+                local status_num
+                status_num=$(echo "${http_code}" | grep -o '[0-9]*$')
+                if [ "${status_num}" = "404" ]; then
+                    echo -e "  ${GREEN}PASS${NC}  ${domain} (${name}) — routed to WireMock (404: no mapping for /)"
+                else
+                    echo -e "  ${GREEN}PASS${NC}  ${domain} (${name}) — HTTP ${status_num}"
+                fi
+                pass=$((pass + 1))
+            else
+                echo -e "  ${RED}FAIL${NC}  ${domain} (${name}) — not reachable"
+                fail=$((fail + 1))
+            fi
+        done < "${domains_file}"
+    done
+
+    echo ""
+    if [ $fail -eq 0 ]; then
+        log_ok "All ${pass} mocked domain(s) verified."
+    else
+        log_err "${fail} domain(s) failed. ${pass} passed."
+        log "Check: ./devstack.sh logs web (nginx routing)"
+        log "Check: ./devstack.sh status (container health)"
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Init — scaffold a new project interactively
+# ---------------------------------------------------------------------------
+cmd_init() {
+    echo ""
+    log "DevStack Project Setup"
+    echo ""
+
+    # Check if already configured
+    if [ -d "${DEVSTACK_DIR}/mocks" ] && [ "$(ls -A "${DEVSTACK_DIR}/mocks" 2>/dev/null)" ]; then
+        log_warn "This directory already has mocks configured."
+        log "Run './devstack.sh start' to use the existing config."
+        log "Or delete mocks/ and app/ to start fresh."
+        exit 1
+    fi
+
+    # Interactive prompts (with defaults)
+    echo -n "  Project name [myproject]: "
+    read -r input_name
+    local proj_name="${input_name:-myproject}"
+
+    echo -n "  App type (node-express, php-laravel, go) [node-express]: "
+    read -r input_type
+    local app_type="${input_type:-node-express}"
+
+    # Validate app type
+    if [ ! -d "${DEVSTACK_DIR}/templates/apps/${app_type}" ]; then
+        log_err "Unknown app type '${app_type}'. Available:"
+        ls -1 "${DEVSTACK_DIR}/templates/apps/"
+        exit 1
+    fi
+
+    echo -n "  Database (mariadb, postgres, none) [mariadb]: "
+    read -r input_db
+    local db_type="${input_db:-mariadb}"
+
+    echo -n "  Extra services (comma-separated: redis, mailpit) [redis]: "
+    read -r input_extras
+    local extras="${input_extras:-redis}"
+
+    echo -n "  HTTP port [8080]: "
+    read -r input_port
+    local http_port="${input_port:-8080}"
+
+    # Write project.env
+    cat > "${DEVSTACK_DIR}/project.env" <<INIT_ENV
+# =============================================================================
+# DevStack Project Configuration
+# Generated by: ./devstack.sh init
+# =============================================================================
+
+PROJECT_NAME=${proj_name}
+NETWORK_SUBNET=172.28.0.0/24
+
+APP_TYPE=${app_type}
+APP_SOURCE=./app
+APP_INIT_SCRIPT=./app/init.sh
+
+HTTP_PORT=${http_port}
+HTTPS_PORT=$((http_port + 363))
+TEST_DASHBOARD_PORT=$((http_port + 2))
+MAILPIT_PORT=8025
+
+DB_TYPE=${db_type}
+DB_NAME=${proj_name}
+DB_USER=${proj_name}
+DB_PASSWORD=secret
+DB_ROOT_PASSWORD=root
+
+EXTRAS=${extras}
+INIT_ENV
+
+    # Create app directory with template Dockerfile
+    mkdir -p "${DEVSTACK_DIR}/app"
+    if [ ! -f "${DEVSTACK_DIR}/app/Dockerfile" ]; then
+        cp "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" "${DEVSTACK_DIR}/app/Dockerfile"
+    fi
+
+    # Create init.sh
+    if [ ! -f "${DEVSTACK_DIR}/app/init.sh" ]; then
+        cat > "${DEVSTACK_DIR}/app/init.sh" <<'INIT_SH'
+#!/bin/sh
+echo "[init] App initialization starting..."
+# Add your setup steps here (install deps, run migrations, seed data)
+echo "[init] Done."
+INIT_SH
+        chmod +x "${DEVSTACK_DIR}/app/init.sh"
+    fi
+
+    # Create mocks directory
+    mkdir -p "${DEVSTACK_DIR}/mocks"
+
+    # Create tests directory
+    mkdir -p "${DEVSTACK_DIR}/tests/playwright"
+    if [ ! -f "${DEVSTACK_DIR}/tests/playwright/playwright.config.ts" ]; then
+        cat > "${DEVSTACK_DIR}/tests/playwright/package.json" <<'TEST_PKG'
+{
+  "name": "devstack-tests",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@playwright/test": "1.52.0"
+  }
+}
+TEST_PKG
+        cat > "${DEVSTACK_DIR}/tests/playwright/playwright.config.ts" <<'TEST_CFG'
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+    testDir: '.',
+    testMatch: '**/*.spec.ts',
+    timeout: 30000,
+    retries: 0,
+    workers: 1,
+    use: {
+        baseURL: process.env.BASE_URL || 'http://web',
+        ignoreHTTPSErrors: true,
+        screenshot: 'on',
+    },
+    reporter: [
+        ['html', { outputFolder: process.env.PLAYWRIGHT_HTML_REPORT || '/results/report', open: 'never' }],
+        ['json', { outputFile: process.env.PLAYWRIGHT_JSON_OUTPUT_FILE || '/results/results.json' }],
+        ['list'],
+    ],
+    outputDir: '/results/artifacts',
+});
+TEST_CFG
+    fi
+
+    echo ""
+    log_ok "Project initialized: ${proj_name}"
+    echo ""
+    log "Created:"
+    log "  project.env        — project configuration"
+    log "  app/Dockerfile     — container build (from ${app_type} template)"
+    log "  app/init.sh        — startup script (edit to add migrations, etc.)"
+    log "  tests/playwright/  — test config"
+    echo ""
+    log "Next steps:"
+    log "  1. Add your app code to app/"
+    log "  2. Add mocked services: ./devstack.sh new-mock stripe api.stripe.com"
+    log "  3. Start: ./devstack.sh start"
+    echo ""
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -735,6 +941,8 @@ main() {
         new-mock)          cmd_new_mock "$@" ;;
         record)            cmd_record "$@" ;;
         apply-recording)   cmd_apply_recording "$@" ;;
+        verify-mocks)      cmd_verify_mocks "$@" ;;
+        init)              cmd_init "$@" ;;
         help|--help|-h)
             echo ""
             echo "DevStack — Container-first development with transparent mock interception"
@@ -758,8 +966,10 @@ main() {
             echo "  reload-mocks                Hot-reload mock mappings (no restart needed)"
             echo "  record <mock-name>          Record real API responses as mock mappings"
             echo "  apply-recording <mock-name> Apply recorded mappings into mock (with path fixup)"
+            echo "  verify-mocks                Check all mocked domains are reachable"
             echo ""
             echo "Config:"
+            echo "  init                        Interactive project setup (scaffolds project.env, app/, etc.)"
             echo "  generate                    Regenerate config files without starting"
             echo "  help                        Show this help"
             echo ""
