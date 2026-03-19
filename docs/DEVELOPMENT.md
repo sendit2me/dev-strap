@@ -208,6 +208,33 @@ In production, it goes to the real Stripe API.
 
 No `if (isDev)` flags. No environment-switching logic.
 
+### Iterating on mock responses
+
+You don't need a full restart to change mock responses:
+
+```bash
+# Edit a mapping
+vim mocks/stripe/mappings/create-charge.json
+
+# Hot-reload (takes effect immediately)
+./devstack.sh reload-mocks
+```
+
+A full restart (`./devstack.sh restart`) is only needed when adding a **new domain**.
+
+### Recording from a real API
+
+If you're integrating a new API and don't know the response format:
+
+```bash
+./devstack.sh new-mock stripe api.stripe.com   # scaffold
+./devstack.sh restart                            # pick up domain
+./devstack.sh record stripe                      # proxy to real API, Ctrl+C when done
+./devstack.sh apply-recording stripe             # apply captured mappings
+```
+
+See [ADDING_MOCKS.md](ADDING_MOCKS.md#recording-real-api-responses) for the full workflow.
+
 ### Debugging mock interception
 
 If a mock isn't being hit:
@@ -216,6 +243,9 @@ If a mock isn't being hit:
 # Check WireMock received the request
 ./devstack.sh shell wiremock
 wget -qO- http://localhost:8080/__admin/requests
+
+# Check what mappings are loaded
+wget -qO- http://localhost:8080/__admin/mappings
 
 # Check nginx is routing correctly
 ./devstack.sh logs web

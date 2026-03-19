@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Trust the devstack CA certificate
-RUN mkdir -p /usr/local/share/ca-certificates
-COPY --from=certs /certs/ca.crt /usr/local/share/ca-certificates/devstack-ca.crt 2>/dev/null || true
+# NOTE: The DevStack CA cert is mounted at /certs/ca.crt at runtime (not build time).
+# To trust it, add this to your init.sh:
+#   cp /certs/ca.crt /usr/local/share/ca-certificates/devstack-ca.crt && update-ca-certificates
 
 WORKDIR /var/www/html
 COPY . .

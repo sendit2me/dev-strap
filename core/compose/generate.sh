@@ -27,12 +27,14 @@ mkdir -p "${OUTPUT_DIR}"
 # ---------------------------------------------------------------------------
 ALL_MOCK_DOMAINS=()
 WIREMOCK_MAPPING_VOLUMES=""
+WIREMOCK_FILES_VOLUMES=""
 if [ -d "${DEVSTACK_DIR}/mocks" ]; then
     for mock_dir in "${DEVSTACK_DIR}"/mocks/*/; do
         [ -d "${mock_dir}" ] || continue
         mock_name=$(basename "${mock_dir}")
         domains_file="${mock_dir}domains"
         mappings_dir="${mock_dir}mappings"
+        files_dir="${mock_dir}__files"
 
         if [ -f "${domains_file}" ]; then
             while IFS= read -r domain || [ -n "${domain}" ]; do
@@ -45,6 +47,11 @@ if [ -d "${DEVSTACK_DIR}/mocks" ]; then
 
         if [ -d "${mappings_dir}" ]; then
             WIREMOCK_MAPPING_VOLUMES="${WIREMOCK_MAPPING_VOLUMES}      - ${mappings_dir}:/home/wiremock/mappings/${mock_name}:ro
+"
+        fi
+
+        if [ -d "${files_dir}" ]; then
+            WIREMOCK_FILES_VOLUMES="${WIREMOCK_FILES_VOLUMES}      - ${files_dir}:/home/wiremock/__files/${mock_name}:ro
 "
         fi
     done
@@ -230,7 +237,7 @@ if [ ${#ALL_MOCK_DOMAINS[@]} -gt 0 ]; then
       --verbose
       --global-response-templating
     volumes:
-${WIREMOCK_MAPPING_VOLUMES}      - ${PROJECT_NAME}-certs:/home/wiremock/certs:ro
+${WIREMOCK_MAPPING_VOLUMES}${WIREMOCK_FILES_VOLUMES}      - ${PROJECT_NAME}-certs:/home/wiremock/certs:ro
     depends_on:
       cert-gen:
         condition: service_completed_successfully
@@ -333,6 +340,7 @@ networks:
 # =============================================================================
 volumes:
   ${PROJECT_NAME}-certs:${DB_VOLUMES}
+  ${PROJECT_NAME}-go-modules:
 COMPOSE_FOOTER
 
 echo "[compose-gen] Generated ${OUTPUT_FILE}"

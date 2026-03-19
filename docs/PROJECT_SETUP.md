@@ -261,17 +261,16 @@ chmod +x app/init.sh
 
 Decide which external APIs your app calls and create a mock for each. See [ADDING_MOCKS.md](ADDING_MOCKS.md) for the full guide.
 
-Quick example — your app calls Stripe:
+### Option A: Write mappings by hand
 
 ```bash
-mkdir -p mocks/stripe/mappings
-echo "api.stripe.com" > mocks/stripe/domains
+# Scaffold the mock
+./devstack.sh new-mock stripe api.stripe.com
 ```
 
-Add a mapping for the endpoint you need:
+This creates `mocks/stripe/` with a `domains` file and an example mapping. Edit or replace the mappings:
 
 ```json
-// mocks/stripe/mappings/create-charge.json
 {
     "request": {
         "method": "POST",
@@ -290,7 +289,36 @@ Add a mapping for the endpoint you need:
 }
 ```
 
-Your app code calls `https://api.stripe.com/v1/charges` with real HTTPS — DevStack intercepts it transparently.
+### Option B: Record from the real API
+
+If you don't know the exact response format, record it:
+
+```bash
+./devstack.sh new-mock stripe api.stripe.com
+./devstack.sh restart                            # pick up the new domain
+./devstack.sh record stripe                      # proxies to real Stripe API
+# Make requests through your app — responses are captured
+# Press Ctrl+C when done
+./devstack.sh apply-recording stripe             # copies recordings into the mock
+```
+
+This captures real request/response pairs and converts them into WireMock mappings. Review them before committing — they may contain API keys in headers.
+
+After either option, your app code calls `https://api.stripe.com/v1/charges` with real HTTPS — DevStack intercepts it transparently.
+
+### Iterating on mocks
+
+Once the domain is set up, you don't need a full restart to change mappings:
+
+```bash
+# Edit a mapping file
+vim mocks/stripe/mappings/create-charge.json
+
+# Hot-reload (no restart)
+./devstack.sh reload-mocks
+```
+
+A full restart (`./devstack.sh restart`) is only needed when adding a new domain.
 
 ## Step 6: Write tests
 

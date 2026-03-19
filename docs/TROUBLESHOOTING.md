@@ -104,6 +104,48 @@ If you have multiple mappings that could match, check priorities:
 
 Without explicit priorities, WireMock matches the most specific mapping first.
 
+### WireMock returns HTML error page instead of JSON
+
+A WireMock response template has a rendering error. Your app receives an HTML error page which the JSON parser can't handle.
+
+Common cause: Handlebars template syntax errors in your mapping, especially date format strings with single quotes:
+
+```json
+// BROKEN — nested single quotes in JSON
+"body": "{{now format='yyyy-MM-dd'T'HH:mm:ss'Z''}}"
+
+// WORKS — use simple format or escape carefully
+"body": "{{now}}"
+"body": "{{now format='yyyy-MM-dd'}}"
+```
+
+To debug, check WireMock logs:
+
+```bash
+./devstack.sh logs wiremock
+```
+
+### Two mocked APIs have the same endpoint path
+
+If `mocks/stripe/` and `mocks/openai/` both define `POST /v1/tokens`, WireMock can't distinguish them by default because all mocked domains share one WireMock instance.
+
+Fix: add `X-Original-Host` header matching to the conflicting mappings:
+
+```json
+{
+    "request": {
+        "method": "POST",
+        "url": "/v1/tokens",
+        "headers": {
+            "X-Original-Host": { "equalTo": "api.stripe.com" }
+        }
+    },
+    "response": { ... }
+}
+```
+
+Nginx automatically adds this header when proxying to WireMock.
+
 ## Test failures
 
 ### "Executable doesn't exist" / browser version mismatch
@@ -253,4 +295,51 @@ If Docker crashed or the machine rebooted during a run:
 docker compose -p myproject down -v --remove-orphans
 rm -rf .generated
 ./devstack.sh start
+```
+
+### Root-owned files (permission denied)
+
+Containers run as root by default, so files written by containers (test results, recorded mappings, node_modules) are owned by root on the host. DevStack handles this automatically on `stop`, but if you need to manually clean:
+
+```bash
+# Use a Docker container to remove root-owned files
+docker run --rm -v $(pwd)/tests:/data alpine rm -rf /data/results/* /data/playwright/node_modules
+docker run --rm -v $(pwd)/mocks/stripe:/data alpine rm -rf /data/recordings
+```
+
+### Recording doesn't capture anything
+
+The recorder container listens on its own hostname (`${PROJECT_NAME}-recorder:8080`), not on the mocked domain. You need to make requests directly to the recorder, not through nginx.
+
+From another terminal while recording:
+
+```bash
+./devstack.sh shell app
+wget -qO- http://myproject-recorder:8080/v1/charges
+```
+
+Or use `curl` with your actual app by temporarily changing the API base URL to `http://myproject-recorder:8080`.
+
+### Recorded mapping bodyFileName not found
+
+After applying recordings, WireMock can't find response body files. This happens when `bodyFileName` paths don't match the mount structure.
+
+`apply-recording` automatically rewrites paths (e.g., `"bodyFileName": "body-get-abc.json"` becomes `"bodyFileName": "stripe/body-get-abc.json"` to match the mount at `/home/wiremock/__files/stripe/`).
+
+If you copied files manually instead of using `apply-recording`, you need to either:
+1. Prefix `bodyFileName` values with the mock name: `"stripe/body-get-abc.json"`
+2. Or place body files directly in `mocks/<name>/__files/` and use `apply-recording` next time
+
+### Subnet conflict running multiple projects
+
+If you get a Docker network error like "Pool overlaps with other one on this address space", two DevStack projects are using the same subnet.
+
+Fix: change `NETWORK_SUBNET` in `project.env` for one of the projects:
+
+```env
+# Project A
+NETWORK_SUBNET=172.28.0.0/24
+
+# Project B
+NETWORK_SUBNET=172.29.0.0/24
 ```

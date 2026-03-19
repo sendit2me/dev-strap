@@ -101,9 +101,12 @@ cmd_start() {
 
     # Build and start
     log "Building containers..."
-    docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
+    if ! docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
         -p "${PROJECT_NAME}" \
-        build --quiet 2>/dev/null || true
+        build; then
+        log_err "Docker build failed. Check your Dockerfile and app source."
+        exit 1
+    fi
 
     log "Starting services..."
     docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
@@ -140,16 +143,14 @@ cmd_start() {
         fi
     fi
 
-    # Run init script if configured
+    # Run init script if configured — pipe the script content into the container
+    # This works regardless of where the app source is mounted (/app, /var/www/html, etc.)
     if [ -n "${APP_INIT_SCRIPT:-}" ] && [ -f "${DEVSTACK_DIR}/${APP_INIT_SCRIPT}" ]; then
         log "Running app init script..."
         docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
             -p "${PROJECT_NAME}" \
-            exec -T app sh -c "/app/init.sh" 2>/dev/null || \
-        docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
-            -p "${PROJECT_NAME}" \
-            exec -T app bash -c "$(cat "${DEVSTACK_DIR}/${APP_INIT_SCRIPT}")" 2>/dev/null || \
-        log_warn "Init script failed or app container not ready yet"
+            exec -T app sh < "${DEVSTACK_DIR}/${APP_INIT_SCRIPT}" || \
+        log_warn "Init script failed — check './devstack.sh logs app' for details"
     fi
 
     # Print summary
@@ -405,6 +406,312 @@ cmd_mocks() {
 }
 
 # ---------------------------------------------------------------------------
+# Restart — convenience stop + start
+# ---------------------------------------------------------------------------
+cmd_restart() {
+    cmd_stop
+    cmd_start
+}
+
+# ---------------------------------------------------------------------------
+# Reload Mocks — hot-reload WireMock mappings without full restart
+# ---------------------------------------------------------------------------
+cmd_reload_mocks() {
+    if [ ! -f "${GENERATED_DIR}/docker-compose.yml" ]; then
+        log_err "DevStack is not running. Run './devstack.sh start' first."
+        exit 1
+    fi
+
+    log "Reloading mock mappings..."
+
+    # Reset WireMock mappings from disk
+    local response
+    response=$(docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
+        -p "${PROJECT_NAME}" \
+        exec -T wiremock wget -qO- --post-data='' \
+        "http://localhost:8080/__admin/mappings/reset" 2>&1) || {
+        log_err "Failed to reload mocks. Is WireMock running?"
+        log "Try: ./devstack.sh status"
+        return 1
+    }
+
+    # Show loaded mapping count
+    local count
+    count=$(docker compose -f "${GENERATED_DIR}/docker-compose.yml" \
+        -p "${PROJECT_NAME}" \
+        exec -T wiremock wget -qO- \
+        "http://localhost:8080/__admin/mappings" 2>/dev/null | \
+        grep -o '"total":[0-9]*' | head -1 | grep -o '[0-9]*') || count="?"
+
+    log_ok "Mock mappings reloaded (${count} mappings loaded)."
+    log "Note: New domains require a full restart (./devstack.sh restart)"
+}
+
+# ---------------------------------------------------------------------------
+# New Mock — scaffold a new mock service
+# ---------------------------------------------------------------------------
+cmd_new_mock() {
+    local name="${1:-}"
+    local domain="${2:-}"
+
+    if [ -z "${name}" ]; then
+        log_err "Usage: ./devstack.sh new-mock <name> <domain>"
+        log "Example: ./devstack.sh new-mock stripe api.stripe.com"
+        exit 1
+    fi
+
+    if [ -z "${domain}" ]; then
+        log_err "Usage: ./devstack.sh new-mock <name> <domain>"
+        log "Example: ./devstack.sh new-mock ${name} api.${name}.com"
+        exit 1
+    fi
+
+    local mock_dir="${DEVSTACK_DIR}/mocks/${name}"
+
+    if [ -d "${mock_dir}" ]; then
+        log_err "Mock '${name}' already exists at ${mock_dir}"
+        exit 1
+    fi
+
+    # Create directory structure
+    mkdir -p "${mock_dir}/mappings"
+
+    # Write domains file
+    echo "${domain}" > "${mock_dir}/domains"
+
+    # Write example mapping
+    cat > "${mock_dir}/mappings/example.json" <<MOCK_EOF
+{
+    "name": "${name} — example endpoint",
+    "request": {
+        "method": "GET",
+        "url": "/v1/status"
+    },
+    "response": {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "service": "${name}",
+            "status": "ok",
+            "mocked": true
+        }
+    }
+}
+MOCK_EOF
+
+    log_ok "Created mock '${name}' at mocks/${name}/"
+    log "  Domain:  ${domain}"
+    log "  Mapping: mocks/${name}/mappings/example.json"
+    echo ""
+    log "Next steps:"
+    log "  1. Edit mocks/${name}/mappings/example.json (or add more mappings)"
+    log "  2. Run './devstack.sh restart' to pick up the new domain"
+    log "  After the first restart, use './devstack.sh reload-mocks' for mapping changes"
+}
+
+# ---------------------------------------------------------------------------
+# Record — proxy to real API and capture responses as mock mappings
+# ---------------------------------------------------------------------------
+cmd_record() {
+    local name="${1:-}"
+
+    if [ -z "${name}" ]; then
+        log_err "Usage: ./devstack.sh record <mock-name>"
+        log ""
+        log "Records real API responses and saves them as WireMock mappings."
+        log "The mock must already exist (use './devstack.sh new-mock' first)."
+        log ""
+        log "Example:"
+        log "  ./devstack.sh new-mock stripe api.stripe.com"
+        log "  ./devstack.sh record stripe"
+        log "  # Make requests through the app — real responses are captured"
+        log "  # Press Ctrl+C to stop recording"
+        log "  # Review, then apply: ./devstack.sh apply-recording stripe"
+        exit 1
+    fi
+
+    local mock_dir="${DEVSTACK_DIR}/mocks/${name}"
+    if [ ! -d "${mock_dir}" ]; then
+        log_err "Mock '${name}' not found. Create it first:"
+        log "  ./devstack.sh new-mock ${name} api.${name}.com"
+        exit 1
+    fi
+
+    local domains_file="${mock_dir}/domains"
+    if [ ! -f "${domains_file}" ]; then
+        log_err "No domains file in mocks/${name}/. Add the domain to intercept."
+        exit 1
+    fi
+
+    # Read the first domain as the proxy target
+    local target_domain
+    target_domain=$(head -1 "${domains_file}" | tr -d '[:space:]')
+    if [ -z "${target_domain}" ]; then
+        log_err "domains file is empty in mocks/${name}/"
+        exit 1
+    fi
+
+    if [ ! -f "${GENERATED_DIR}/docker-compose.yml" ]; then
+        log_err "DevStack is not running. Run './devstack.sh start' first."
+        exit 1
+    fi
+
+    local record_dir="${mock_dir}/recordings"
+
+    # Clean previous recordings (root-owned from container)
+    if [ -d "${record_dir}" ]; then
+        docker run --rm -v "${record_dir}:/data" alpine rm -rf /data/mappings /data/__files 2>/dev/null || true
+    fi
+    mkdir -p "${record_dir}/mappings" "${record_dir}/__files"
+
+    log "Starting recording for '${name}' (proxying to https://${target_domain})..."
+    log ""
+    log "How it works:"
+    log "  1. A temporary WireMock recorder proxies requests to the REAL ${target_domain}"
+    log "  2. Make requests through your app as normal"
+    log "  3. Press Ctrl+C when done — captured mappings are saved"
+    log ""
+    log_warn "This calls the REAL API. You need valid credentials and may incur costs."
+    echo ""
+
+    # Run a temporary WireMock container in record mode
+    docker run --rm -it \
+        --name "${PROJECT_NAME}-recorder" \
+        --network "${PROJECT_NAME}_${PROJECT_NAME}-internal" \
+        -v "${record_dir}/mappings:/home/wiremock/mappings" \
+        -v "${record_dir}/__files:/home/wiremock/__files" \
+        wiremock/wiremock:latest \
+        --port 8080 \
+        --proxy-all "https://${target_domain}" \
+        --record-mappings \
+        --verbose || true
+
+    # Count captured mappings (use docker to read root-owned files)
+    local captured
+    captured=$(docker run --rm -v "${record_dir}:/data" alpine sh -c \
+        'find /data/mappings -name "*.json" 2>/dev/null | wc -l' 2>/dev/null)
+    captured=$(echo "${captured}" | tr -d '[:space:]')
+
+    if [ "${captured}" -gt 0 ]; then
+        echo ""
+        log_ok "Recorded ${captured} mapping(s)."
+        echo ""
+
+        # List what was captured
+        docker run --rm -v "${record_dir}:/data" alpine sh -c \
+            'for f in /data/mappings/*.json; do echo "  - $(basename "$f")"; done' 2>/dev/null
+
+        echo ""
+        log "Next steps:"
+        log "  1. Review recordings:        ls mocks/${name}/recordings/mappings/"
+        log "  2. Apply to mock:            ./devstack.sh apply-recording ${name}"
+        log "  3. Activate:                 ./devstack.sh reload-mocks  (or restart for new domains)"
+        log ""
+        log_warn "Review recordings before applying — they may contain API keys or tokens in headers."
+    else
+        echo ""
+        log_warn "No mappings captured. Did you make requests while recording?"
+        log "The recorder listens at http://${PROJECT_NAME}-recorder:8080 inside the Docker network."
+        log "From another terminal: ./devstack.sh shell app"
+        log "Then: wget -qO- http://${PROJECT_NAME}-recorder:8080/your/endpoint"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Apply Recording — copy recorded mappings into the active mock
+# ---------------------------------------------------------------------------
+cmd_apply_recording() {
+    local name="${1:-}"
+
+    if [ -z "${name}" ]; then
+        log_err "Usage: ./devstack.sh apply-recording <mock-name>"
+        exit 1
+    fi
+
+    local mock_dir="${DEVSTACK_DIR}/mocks/${name}"
+    local record_dir="${mock_dir}/recordings"
+
+    if [ ! -d "${record_dir}/mappings" ]; then
+        log_err "No recordings found for '${name}'."
+        log "Run './devstack.sh record ${name}' first."
+        exit 1
+    fi
+
+    # Count recordings
+    local count
+    count=$(docker run --rm -v "${record_dir}:/data" alpine sh -c \
+        'find /data/mappings -name "*.json" 2>/dev/null | wc -l' 2>/dev/null)
+    count=$(echo "${count}" | tr -d '[:space:]')
+
+    if [ "${count}" -eq 0 ]; then
+        log_warn "No recorded mappings to apply."
+        exit 0
+    fi
+
+    log "Applying ${count} recording(s) to mocks/${name}/..."
+
+    # Ensure target directories exist
+    mkdir -p "${mock_dir}/mappings" "${mock_dir}/__files"
+
+    # Copy mappings and __files, fix ownership to current user, and rewrite
+    # bodyFileName paths to include the mock subdirectory (WireMock mounts
+    # __files at /home/wiremock/__files/<name>/)
+    docker run --rm \
+        -v "${record_dir}:/src:ro" \
+        -v "${mock_dir}:/dst" \
+        -e "MOCK_NAME=${name}" \
+        alpine sh -c '
+            # Copy mappings — rewrite bodyFileName to include subdirectory
+            for f in /src/mappings/*.json; do
+                [ -f "$f" ] || continue
+                fname=$(basename "$f")
+                if grep -q "bodyFileName" "$f"; then
+                    # Rewrite "bodyFileName": "body-xxx.json"
+                    # to      "bodyFileName": "<mock_name>/body-xxx.json"
+                    sed "s|\"bodyFileName\" *: *\"|\"bodyFileName\" : \"${MOCK_NAME}/|" "$f" \
+                        > "/dst/mappings/${fname}"
+                else
+                    cp "$f" "/dst/mappings/${fname}"
+                fi
+            done
+
+            # Copy response body files
+            for f in /src/__files/*; do
+                [ -f "$f" ] || continue
+                cp "$f" "/dst/__files/$(basename "$f")"
+            done
+
+            # Fix ownership so host user can read/edit
+            chown -R '"$(id -u):$(id -g)"' /dst/mappings/ /dst/__files/ 2>/dev/null || true
+        '
+
+    # List what was applied
+    log_ok "Applied ${count} recording(s):"
+    for f in "${mock_dir}/mappings"/mapping-*.json; do
+        [ -f "${f}" ] || continue
+        log "  - $(basename "${f}")"
+    done
+
+    echo ""
+
+    # Clean up recordings
+    docker run --rm -v "${record_dir}:/data" alpine rm -rf /data/mappings /data/__files 2>/dev/null || true
+    rmdir "${record_dir}" 2>/dev/null || true
+
+    log_ok "Recordings applied and cleaned up."
+
+    # Reload if stack is running
+    if [ -f "${GENERATED_DIR}/docker-compose.yml" ]; then
+        log "Reloading mock mappings..."
+        cmd_reload_mocks
+    else
+        log "Run './devstack.sh restart' to activate the new mappings."
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -415,30 +722,46 @@ main() {
     shift 2>/dev/null || true
 
     case "${command}" in
-        start)    cmd_start "$@" ;;
-        stop)     cmd_stop "$@" ;;
-        test)     cmd_test "$@" ;;
-        shell)    cmd_shell "$@" ;;
-        status)   cmd_status "$@" ;;
-        logs)     cmd_logs "$@" ;;
-        generate) cmd_generate "$@" ;;
-        mocks)    cmd_mocks "$@" ;;
+        start)        cmd_start "$@" ;;
+        stop)         cmd_stop "$@" ;;
+        restart)      cmd_restart "$@" ;;
+        test)         cmd_test "$@" ;;
+        shell)        cmd_shell "$@" ;;
+        status)       cmd_status "$@" ;;
+        logs)         cmd_logs "$@" ;;
+        generate)     cmd_generate "$@" ;;
+        mocks)        cmd_mocks "$@" ;;
+        reload-mocks)      cmd_reload_mocks "$@" ;;
+        new-mock)          cmd_new_mock "$@" ;;
+        record)            cmd_record "$@" ;;
+        apply-recording)   cmd_apply_recording "$@" ;;
         help|--help|-h)
             echo ""
             echo "DevStack — Container-first development with transparent mock interception"
             echo ""
             echo "Usage: ./devstack.sh <command> [options]"
             echo ""
-            echo "Commands:"
-            echo "  start          Build and start the full stack"
-            echo "  stop           Stop and remove everything (clean slate)"
-            echo "  test [filter]  Run Playwright tests (optional grep filter)"
-            echo "  shell [svc]    Shell into a container (default: app)"
-            echo "  status         Show container status and health"
-            echo "  logs [svc]     Tail logs (default: all services)"
-            echo "  generate       Regenerate config files without starting"
-            echo "  mocks          List configured mock services and domains"
-            echo "  help           Show this help"
+            echo "Stack:"
+            echo "  start                       Build and start the full stack"
+            echo "  stop                        Stop and remove everything (clean slate)"
+            echo "  restart                     Stop, then start (clean rebuild)"
+            echo "  status                      Show container status and health"
+            echo "  logs [service]              Tail logs (default: all services)"
+            echo "  shell [service]             Shell into a container (default: app)"
+            echo ""
+            echo "Testing:"
+            echo "  test [filter]               Run Playwright tests (optional grep filter)"
+            echo ""
+            echo "Mocks:"
+            echo "  mocks                       List configured mock services and domains"
+            echo "  new-mock <name> <domain>    Scaffold a new mock service"
+            echo "  reload-mocks                Hot-reload mock mappings (no restart needed)"
+            echo "  record <mock-name>          Record real API responses as mock mappings"
+            echo "  apply-recording <mock-name> Apply recorded mappings into mock (with path fixup)"
+            echo ""
+            echo "Config:"
+            echo "  generate                    Regenerate config files without starting"
+            echo "  help                        Show this help"
             echo ""
             echo "Configuration: project.env"
             echo "Mock services:  mocks/<name>/domains + mocks/<name>/mappings/*.json"

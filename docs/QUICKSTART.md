@@ -45,18 +45,30 @@ See [PROJECT_SETUP.md](PROJECT_SETUP.md) for the full walkthrough.
 ## CLI Reference
 
 ```bash
-./devstack.sh start          # Generate config, build, start all containers
-./devstack.sh stop           # Tear down everything (clean slate)
-./devstack.sh test           # Run all Playwright tests in container
-./devstack.sh test "login"   # Run tests matching a grep filter
-./devstack.sh shell          # Shell into the app container
-./devstack.sh shell db       # Shell into any container by service name
-./devstack.sh status         # Show all containers and their health
-./devstack.sh logs           # Tail all container logs
-./devstack.sh logs app       # Tail a single service's logs
-./devstack.sh mocks          # List all configured mock services and their mappings
-./devstack.sh generate       # Regenerate config files without starting (for inspection)
-./devstack.sh help           # Show help
+# Stack
+./devstack.sh start                       # Generate config, build, start all containers
+./devstack.sh stop                        # Tear down everything (clean slate)
+./devstack.sh restart                     # Stop, then start (clean rebuild)
+./devstack.sh status                      # Show all containers and their health
+./devstack.sh logs                        # Tail all container logs
+./devstack.sh logs app                    # Tail a single service's logs
+./devstack.sh shell                       # Shell into the app container
+./devstack.sh shell db                    # Shell into any container by service name
+
+# Testing
+./devstack.sh test                        # Run all Playwright tests in container
+./devstack.sh test "login"                # Run tests matching a grep filter
+
+# Mocks
+./devstack.sh mocks                       # List configured mock services and mappings
+./devstack.sh new-mock stripe api.stripe.com  # Scaffold a new mock service
+./devstack.sh reload-mocks                # Hot-reload mappings (no restart needed)
+./devstack.sh record stripe               # Record real API responses as mock mappings
+./devstack.sh apply-recording stripe      # Apply recorded mappings into mock
+
+# Config
+./devstack.sh generate                    # Regenerate config without starting
+./devstack.sh help                        # Show help
 ```
 
 ## Where to go next
@@ -65,6 +77,7 @@ See [PROJECT_SETUP.md](PROJECT_SETUP.md) for the full walkthrough.
 |---------------|------|
 | Set up my own project from scratch | [PROJECT_SETUP.md](PROJECT_SETUP.md) |
 | Mock an external API | [ADDING_MOCKS.md](ADDING_MOCKS.md) |
+| Record real API responses as mocks | [ADDING_MOCKS.md](ADDING_MOCKS.md#recording-real-api-responses) |
 | Add a custom service (Redis, Mailpit, etc.) | [ADDING_SERVICES.md](ADDING_SERVICES.md) |
 | Write and run tests | [TESTING.md](TESTING.md) |
 | Set up VS Code dev containers | [DEVELOPMENT.md](DEVELOPMENT.md) |

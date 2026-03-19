@@ -139,7 +139,9 @@ project.env + mocks/*/domains
          │     │
          │     ├── reads templates/apps/{APP_TYPE}/service.yml
          │     ├── reads templates/databases/{DB_TYPE}/service.yml
-         │     └── reads templates/extras/{name}/service.yml
+         │     ├── reads templates/extras/{name}/service.yml
+         │     ├── mounts mocks/*/mappings/ into WireMock (for request matching)
+         │     └── mounts mocks/*/__files/ into WireMock (for response bodies)
          │
          └──▶ .generated/domains.txt ──▶ core/certs/generate.sh (in container)
                                               │
@@ -147,6 +149,25 @@ project.env + mocks/*/domains
 ```
 
 Everything in `.generated/` is ephemeral — deleted on `devstack.sh stop`, regenerated on `devstack.sh start`.
+
+## Mock Recording Pipeline
+
+```
+./devstack.sh record <name>
+         │
+         ├── Reads mocks/<name>/domains for the target API hostname
+         ├── Runs temporary WireMock in proxy mode (--proxy-all --record-mappings)
+         ├── Captures request/response pairs to mocks/<name>/recordings/
+         │
+         └── ./devstack.sh apply-recording <name>
+              │
+              ├── Copies mappings to mocks/<name>/mappings/
+              ├── Copies response bodies to mocks/<name>/__files/
+              ├── Rewrites bodyFileName paths for WireMock subdirectory mounting
+              ├── Fixes file ownership (container writes as root)
+              ├── Cleans up recordings/
+              └── Calls reload-mocks (WireMock /__admin/mappings/reset)
+```
 
 ## Adding a New App Template
 
@@ -156,4 +177,4 @@ Everything in `.generated/` is ephemeral — deleted on `devstack.sh stop`, rege
 4. Optionally add `.devcontainer/devcontainer.json` for VS Code
 5. Set `APP_TYPE=my-language` in `project.env`
 
-The service.yml must define a service named `app` that exposes port 3000 (for proxied languages) or 9000 (for PHP-FPM).
+The service.yml must define a service named `app` that exposes port 3000 (for proxied languages) or 9000 (for PHP-FPM). See [CREATING_TEMPLATES.md](CREATING_TEMPLATES.md) for a full walkthrough.

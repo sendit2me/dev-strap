@@ -229,6 +229,120 @@ wget -qO- http://localhost:8080/__admin/requests | python3 -m json.tool
 curl -k https://api.example-provider.com/v1/items
 ```
 
+## Disambiguating Shared Paths (Multi-Domain Routing)
+
+All mocked domains share a single WireMock instance. If two APIs use the same path (e.g., both Stripe and OpenAI have `POST /v1/tokens`), WireMock needs to distinguish them.
+
+Nginx adds an `X-Original-Host` header with the original domain. Use `headerPatterns` in your mapping to match on it:
+
+```json
+{
+    "name": "Stripe — create token (not OpenAI)",
+    "request": {
+        "method": "POST",
+        "url": "/v1/tokens",
+        "headers": {
+            "X-Original-Host": {
+                "equalTo": "api.stripe.com"
+            }
+        }
+    },
+    "response": {
+        "status": 200,
+        "jsonBody": { "id": "tok_stripe_123" }
+    }
+}
+```
+
+```json
+{
+    "name": "OpenAI — create token (not Stripe)",
+    "request": {
+        "method": "POST",
+        "url": "/v1/tokens",
+        "headers": {
+            "X-Original-Host": {
+                "equalTo": "api.openai.com"
+            }
+        }
+    },
+    "response": {
+        "status": 200,
+        "jsonBody": { "id": "tok_openai_456" }
+    }
+}
+```
+
+**When do you need this?** Only when two mocked services share the exact same HTTP method + URL path. Most real-world APIs have unique paths, so this is rare. If it does happen, add `X-Original-Host` matching to both conflicting mappings.
+
+## Recording Real API Responses
+
+To quickly create mock mappings from a real API:
+
+```bash
+# 1. Create the mock directory
+./devstack.sh new-mock stripe api.stripe.com
+
+# 2. Restart to register the new domain (certs, DNS, nginx)
+./devstack.sh restart
+
+# 3. Start recording (proxies to the real API)
+./devstack.sh record stripe
+# Make requests through your app in another terminal — real responses are captured
+# Press Ctrl+C when done
+
+# 4. Review captured mappings (remove sensitive data!)
+ls mocks/stripe/recordings/mappings/
+
+# 5. Apply recordings — copies mappings + response bodies, fixes paths, reloads WireMock
+./devstack.sh apply-recording stripe
+```
+
+**What `apply-recording` does:**
+- Copies mapping files from `recordings/mappings/` to `mappings/`
+- Copies response body files from `recordings/__files/` to `__files/`
+- Rewrites `bodyFileName` paths to match WireMock's subdirectory mount structure
+- Fixes file ownership (containers write as root, apply fixes to your user)
+- Cleans up the `recordings/` directory
+- Hot-reloads WireMock if the stack is running
+
+The recorder runs a temporary WireMock in proxy mode that forwards to the real API and captures every request/response pair. Review the captured files before applying — they may contain API keys, tokens, or other sensitive data in headers.
+
+## Hot-Reloading Mappings
+
+After editing mapping files, you don't need a full restart:
+
+```bash
+# Change a mapping file
+vim mocks/stripe/mappings/create-charge.json
+
+# Reload without restart
+./devstack.sh reload-mocks
+```
+
+This calls WireMock's `/__admin/mappings/reset` endpoint, which re-reads all mapping files from disk. Changes take effect immediately.
+
+**When you DO need a full restart:** Adding a new domain (new `mocks/<name>/domains` file) requires regenerating nginx config and certificates, which requires `./devstack.sh restart`.
+
+## Debugging Mock Responses
+
+```bash
+# See what requests WireMock received
+./devstack.sh shell wiremock
+wget -qO- http://localhost:8080/__admin/requests | head -200
+
+# See what mappings are loaded
+wget -qO- http://localhost:8080/__admin/mappings | head -200
+
+# Reset WireMock's request log (useful for clean test runs)
+wget -qO- --post-data='' http://localhost:8080/__admin/requests/reset
+```
+
+Common issues:
+- **404 from WireMock**: Mapping doesn't match. Check URL, method, and `bodyPatterns`.
+- **HTML error page instead of JSON**: WireMock template rendering failed. Check your `{{...}}` expressions — especially date format strings with single quotes need careful escaping in JSON.
+- **Wrong response returned**: Check `priority` values. Lower number = matched first.
+
 ## Tips
 
 - **Naming**: Prefix mapping files with numbers (`01-`, `02-`) for stateful scenarios to show order
@@ -236,3 +350,4 @@ curl -k https://api.example-provider.com/v1/items
 - **Multiple domains**: A single mock service can intercept multiple domains
 - **`__files/` directory**: For large response bodies, put them in `mocks/<name>/__files/` and reference with `"bodyFileName": "response.json"` in the mapping
 - **Reset state**: WireMock scenarios reset when the stack restarts (clean slate principle)
+- **Template escaping**: WireMock uses Handlebars. In JSON, `{{now format='yyyy-MM-dd'}}` works but complex format strings with single quotes need escaping — test with simple formats first

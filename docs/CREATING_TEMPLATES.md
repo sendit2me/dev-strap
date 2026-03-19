@@ -83,7 +83,7 @@ The service.yml defines how this container fits into the docker-compose stack. *
     container_name: ${PROJECT_NAME}-app
     volumes:
       - ${APP_SOURCE}:/app
-      - cargo-registry:/usr/local/cargo/registry
+      - ${PROJECT_NAME}-cargo-registry:/usr/local/cargo/registry
       - ${PROJECT_NAME}-certs:/certs:ro
     working_dir: /app
     environment:
@@ -97,6 +97,8 @@ The service.yml defines how this container fits into the docker-compose stack. *
     networks:
       - ${PROJECT_NAME}-internal
 ```
+
+**Important:** Named volumes (like `${PROJECT_NAME}-cargo-registry`) must be prefixed with `${PROJECT_NAME}` so they're properly namespaced and cleaned up on `./devstack.sh stop`. If you need additional volumes, declare them in the compose generator's volumes section (`core/compose/generate.sh`).
 
 ### Available placeholder variables
 
@@ -123,19 +125,15 @@ For HTTPS mock interception to work, your app must trust the DevStack CA certifi
 | Java | Import into JKS keystore | Use `keytool` in Dockerfile |
 | PHP | Update OS trust store | `update-ca-certificates` in Dockerfile |
 
-For PHP, add this to the Dockerfile:
-
-```dockerfile
-COPY /certs/ca.crt /usr/local/share/ca-certificates/devstack-ca.crt
-RUN update-ca-certificates
-```
-
-Or in the init script, since certs are mounted at runtime:
+For PHP and Java, the CA cert is mounted at runtime (not available at build time), so trust it in your `init.sh`:
 
 ```bash
+# init.sh — for PHP
 cp /certs/ca.crt /usr/local/share/ca-certificates/devstack-ca.crt
 update-ca-certificates
 ```
+
+**Do NOT** try to `COPY /certs/ca.crt` in the Dockerfile — the certs volume doesn't exist during the Docker build, only at runtime.
 
 ### Port convention
 
