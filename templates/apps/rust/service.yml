@@ -1,0 +1,25 @@
+  app:
+    build:
+      context: ${APP_SOURCE}
+      dockerfile: Dockerfile
+    container_name: ${PROJECT_NAME}-app
+    volumes:
+      - ${APP_SOURCE}:/app
+      - ${PROJECT_NAME}-certs:/certs:ro
+      - ${PROJECT_NAME}-cargo-registry:/usr/local/cargo/registry
+      - ${PROJECT_NAME}-cargo-target:/app/target
+    working_dir: /app
+    environment:
+      - RUST_LOG=debug
+      - PORT=3000
+      - SSL_CERT_FILE=/certs/ca.crt
+      - DB_HOST=db
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    depends_on:
+      cert-gen:
+        condition: service_completed_successfully
+    networks:
+      - ${PROJECT_NAME}-internal

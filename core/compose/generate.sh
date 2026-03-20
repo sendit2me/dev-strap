@@ -78,10 +78,16 @@ if [ ${#ALL_MOCK_DOMAINS[@]} -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Resolve APP_SOURCE to absolute path (needed by both app and extras templates)
+# ---------------------------------------------------------------------------
+APP_SOURCE_ABS="${DEVSTACK_DIR}/${APP_SOURCE#./}"
+
+# ---------------------------------------------------------------------------
 # Build extras services
 # ---------------------------------------------------------------------------
 EXTRAS_SERVICES=""
 EXTRAS_DEPENDS=""
+EXTRAS_VOLUMES=""
 IFS=',' read -ra EXTRA_LIST <<< "${EXTRAS:-}"
 for extra in "${EXTRA_LIST[@]}"; do
     extra=$(echo "${extra}" | tr -d '[:space:]')
@@ -98,10 +104,23 @@ $(cat "${extra_file}" | \
             sed "s|\${DEVSTACK_DIR}|${DEVSTACK_DIR}|g" | \
             sed "s|\${PROMETHEUS_PORT}|${PROMETHEUS_PORT:-9090}|g" | \
             sed "s|\${GRAFANA_PORT}|${GRAFANA_PORT:-3001}|g" | \
-            sed "s|\${DOZZLE_PORT}|${DOZZLE_PORT:-9999}|g")"
+            sed "s|\${DOZZLE_PORT}|${DOZZLE_PORT:-9999}|g" | \
+            sed "s|\${NATS_PORT}|${NATS_PORT:-4222}|g" | \
+            sed "s|\${NATS_MONITOR_PORT}|${NATS_MONITOR_PORT:-8222}|g" | \
+            sed "s|\${MINIO_PORT}|${MINIO_PORT:-9000}|g" | \
+            sed "s|\${MINIO_CONSOLE_PORT}|${MINIO_CONSOLE_PORT:-9001}|g" | \
+            sed "s|\${ADMINER_PORT}|${ADMINER_PORT:-8083}|g" | \
+            sed "s|\${SWAGGER_PORT}|${SWAGGER_PORT:-8084}|g" | \
+            sed "s|\${FRONTEND_PORT}|${FRONTEND_PORT:-5173}|g" | \
+            sed "s|\${APP_SOURCE}|${APP_SOURCE_ABS}|g")"
         EXTRAS_DEPENDS="${EXTRAS_DEPENDS}
       ${extra}:
         condition: service_healthy"
+        extra_volumes_file="${DEVSTACK_DIR}/templates/extras/${extra}/volumes.yml"
+        if [ -f "${extra_volumes_file}" ]; then
+            EXTRAS_VOLUMES="${EXTRAS_VOLUMES}
+$(cat "${extra_volumes_file}" | sed "s|\${PROJECT_NAME}|${PROJECT_NAME}|g")"
+        fi
     else
         echo "[compose-gen] WARNING: No template found for extra '${extra}'"
     fi
@@ -145,17 +164,26 @@ esac
 # App-type-specific volumes
 # ---------------------------------------------------------------------------
 APP_VOLUMES=""
-if [ "${APP_TYPE}" = "go" ]; then
-    APP_VOLUMES="
+case "${APP_TYPE}" in
+    go)
+        APP_VOLUMES="
   ${PROJECT_NAME}-go-modules:"
-fi
+        ;;
+    python-fastapi)
+        APP_VOLUMES="
+  ${PROJECT_NAME}-python-cache:"
+        ;;
+    rust)
+        APP_VOLUMES="
+  ${PROJECT_NAME}-cargo-registry:
+  ${PROJECT_NAME}-cargo-target:"
+        ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Build app service from template
 # ---------------------------------------------------------------------------
 APP_SERVICE=""
-# Resolve APP_SOURCE to absolute path (relative to DEVSTACK_DIR)
-APP_SOURCE_ABS="${DEVSTACK_DIR}/${APP_SOURCE#./}"
 app_template="${DEVSTACK_DIR}/templates/apps/${APP_TYPE}/service.yml"
 if [ -f "${app_template}" ]; then
     APP_SERVICE=$(cat "${app_template}" | \
@@ -363,7 +391,7 @@ networks:
 # Volumes
 # =============================================================================
 volumes:
-  ${PROJECT_NAME}-certs:${DB_VOLUMES}${APP_VOLUMES}
+  ${PROJECT_NAME}-certs:${DB_VOLUMES}${APP_VOLUMES}${EXTRAS_VOLUMES}
 COMPOSE_FOOTER
 
 echo "[compose-gen] Generated ${OUTPUT_FILE}"

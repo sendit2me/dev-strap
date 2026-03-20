@@ -1,0 +1,11 @@
+{
+  "contract": "devstrap-bootstrap",
+  "version": "1",
+  "project": "port-test",
+  "selections": {
+    "app": {
+      "node-express": {},
+      "go": { "overrides": { "port": 3001 } }
+    }
+  }
+}

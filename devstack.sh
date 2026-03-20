@@ -1041,7 +1041,7 @@ cmd_contract_bootstrap() {
 }
 
 # Validate bootstrap payload against manifest. Outputs JSON array of error objects.
-# All ten contract-specified checks are performed; ALL errors are collected.
+# All eleven contract-specified checks are performed; ALL errors are collected.
 validate_bootstrap_payload() {
     local payload="$1"
     local manifest_file="$2"
@@ -1170,6 +1170,22 @@ validate_bootstrap_payload() {
                     else . end
                 )
             else . end
+        ) |
+
+        # 11. port collision detection
+        ([($p.selections // {} | to_entries[]) as $ce |
+          ($ce.value // {} | to_entries[]) as $ie |
+          select($manifest.categories[$ce.key].items[$ie.key] // null | . != null) |
+          ($manifest.categories[$ce.key].items[$ie.key].defaults // {}) as $defaults |
+          ($ie.value.overrides // {}) as $overrides |
+          ($defaults * $overrides) as $resolved |
+          ($resolved | to_entries[]) as $kv |
+          select($kv.key == "port" or ($kv.key | endswith("_port"))) |
+          {item: "\($ce.key).\($ie.key)", port: ($kv.value | tostring)}
+        ] | group_by(.port) | map(select(length > 1))) as $collisions |
+        reduce ($collisions[]) as $group (.;
+            . + [{code:"PORT_CONFLICT",
+                  message:"Port \($group[0].port) conflict between \"\($group | map(.item) | join("\" and \""))\""}]
         )
     '
 }
@@ -1186,10 +1202,12 @@ generate_from_bootstrap() {
     project_name=$(printf '%s\n' "${payload}" | jq -r '.project')
     app_type=$(printf '%s\n' "${payload}" | jq -r '.selections.app | keys[0]')
     db_type=$(printf '%s\n' "${payload}" | jq -r '.selections.database // {} | keys[0] // "none"')
-    # Merge services + observability into EXTRAS (both use templates/extras/)
+    # Merge services + observability + extras-backed tooling into EXTRAS
+    # (tooling items like qa, qa-dashboard, wiremock, devcontainer are special-cased below)
     extras=$(printf '%s\n' "${payload}" | jq -r '
         [(.selections.services // {} | keys[]),
-         (.selections.observability // {} | keys[])] | join(",")')
+         (.selections.observability // {} | keys[]),
+         (.selections.tooling // {} | keys[] | select(. != "qa" and . != "qa-dashboard" and . != "wiremock" and . != "devcontainer"))] | join(",")')
 
     # Derive database port
     local db_port=3306
@@ -1206,6 +1224,8 @@ generate_from_bootstrap() {
     local prometheus_port=9090
     local grafana_port=3001
     local dozzle_port=9999
+    local adminer_port=8083
+    local swagger_port=8084
 
     if printf '%s\n' "${payload}" | jq -e '.selections.tooling.wiremock.overrides.port' &>/dev/null; then
         https_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling.wiremock.overrides.port')
@@ -1224,6 +1244,12 @@ generate_from_bootstrap() {
     fi
     if printf '%s\n' "${payload}" | jq -e '.selections.observability.dozzle.overrides.port' &>/dev/null; then
         dozzle_port=$(printf '%s\n' "${payload}" | jq -r '.selections.observability.dozzle.overrides.port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling["db-ui"].overrides.port' &>/dev/null; then
+        adminer_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling["db-ui"].overrides.port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling["swagger-ui"].overrides.port' &>/dev/null; then
+        swagger_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling["swagger-ui"].overrides.port')
     fi
 
     # ── 1. Write project.env ───────────────────────────────────────────────
@@ -1248,6 +1274,8 @@ MAILPIT_PORT=${mailpit_port}
 PROMETHEUS_PORT=${prometheus_port}
 GRAFANA_PORT=${grafana_port}
 DOZZLE_PORT=${dozzle_port}
+ADMINER_PORT=${adminer_port}
+SWAGGER_PORT=${swagger_port}
 
 DB_TYPE=${db_type}
 DB_NAME=${project_name}

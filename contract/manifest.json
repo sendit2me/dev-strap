@@ -5,7 +5,7 @@
     "app": {
       "label": "Application",
       "description": "Development application template",
-      "selection": "multi",
+      "selection": "single",
       "required": true,
       "items": {
         "node-express": {
@@ -22,6 +22,29 @@
           "label": "Go",
           "description": "Go module with Air live reload",
           "defaults": { "port": 3000 }
+        },
+        "python-fastapi": {
+          "label": "Python (FastAPI)",
+          "description": "FastAPI with uvicorn hot reload",
+          "defaults": { "port": 3000 }
+        },
+        "rust": {
+          "label": "Rust",
+          "description": "Rust with cargo-watch live reload",
+          "defaults": { "port": 3000 }
+        }
+      }
+    },
+    "frontend": {
+      "label": "Frontend",
+      "description": "Frontend development server",
+      "selection": "single",
+      "required": false,
+      "items": {
+        "vite": {
+          "label": "Frontend Dev Server (Vite)",
+          "description": "Vite dev server with HMR, configurable API proxy to backend",
+          "defaults": { "port": 5173, "proxy_target": "" }
         }
       }
     },
@@ -59,6 +82,17 @@
           "label": "Mailpit",
           "description": "SMTP catcher with web UI",
           "defaults": { "smtp_port": 1025, "ui_port": 8025 }
+        },
+        "nats": {
+          "label": "NATS",
+          "description": "High-performance messaging with JetStream streaming",
+          "defaults": { "client_port": 4222, "monitor_port": 8222 },
+          "requires": ["app.*"]
+        },
+        "minio": {
+          "label": "MinIO",
+          "description": "S3-compatible object storage for local development",
+          "defaults": { "api_port": 9000, "console_port": 9001 }
         }
       }
     },
@@ -86,6 +120,18 @@
         "devcontainer": {
           "label": "VS Code Dev Container",
           "description": "Generates per-app devcontainer.json for VS Code Remote Containers"
+        },
+        "db-ui": {
+          "label": "Database UI (Adminer)",
+          "description": "Web-based database browser supporting PostgreSQL and MariaDB",
+          "defaults": { "port": 8083 },
+          "requires": ["database.*"]
+        },
+        "swagger-ui": {
+          "label": "API Documentation (Swagger UI)",
+          "description": "Live OpenAPI spec viewer for running backend",
+          "defaults": { "port": 8084 },
+          "requires": ["app.*"]
         }
       }
     },

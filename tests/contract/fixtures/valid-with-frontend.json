@@ -1,0 +1,16 @@
+{
+  "contract": "devstrap-bootstrap",
+  "version": "1",
+  "project": "test-frontend",
+  "selections": {
+    "app": {
+      "go": {}
+    },
+    "frontend": {
+      "vite": {}
+    },
+    "database": {
+      "postgres": {}
+    }
+  }
+}

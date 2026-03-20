@@ -122,7 +122,7 @@ assert_json "has services category" "${options_output}" '.categories.services'
 assert_json "has tooling category"  "${options_output}" '.categories.tooling'
 
 # Category metadata
-assert_json_eq "app is multi select"      "${options_output}" '.categories.app.selection'      "multi"
+assert_json_eq "app is single select"     "${options_output}" '.categories.app.selection'      "single"
 assert_json_eq "app is required"          "${options_output}" '.categories.app.required'       "true"
 assert_json_eq "database is single"       "${options_output}" '.categories.database.selection'  "single"
 assert_json_eq "database is optional"     "${options_output}" '.categories.database.required'   "false"
@@ -133,7 +133,7 @@ assert_json_eq "tooling is multi"         "${options_output}" '.categories.tooli
 assert_json "has node-express"  "${options_output}" '.categories.app.items["node-express"]'
 assert_json "has php-laravel"   "${options_output}" '.categories.app.items["php-laravel"]'
 assert_json "has go"            "${options_output}" '.categories.app.items.go'
-assert_json_eq "app item count is 3" "${options_output}" '.categories.app.items | keys | length' "3"
+assert_json_eq "app item count is 5" "${options_output}" '.categories.app.items | keys | length' "5"
 
 # Database items (2 matching templates/databases/)
 assert_json "has postgres"  "${options_output}" '.categories.database.items.postgres'
@@ -180,6 +180,24 @@ assert_json_eq "dozzle port=9999"        "${options_output}" '.categories.observ
 assert_json "redis requires app.*"            "${options_output}" '.categories.services.items.redis.requires | index("app.*") != null'
 assert_json "qa-dashboard requires tooling.qa" "${options_output}" '.categories.tooling.items["qa-dashboard"].requires | index("tooling.qa") != null'
 assert_json "grafana requires prometheus"      "${options_output}" '.categories.observability.items.grafana.requires | index("observability.prometheus") != null'
+
+# Frontend category
+assert_json "has frontend category" "${options_output}" '.categories.frontend'
+assert_json_eq "frontend is single" "${options_output}" '.categories.frontend.selection' "single"
+assert_json_eq "frontend is optional" "${options_output}" '.categories.frontend.required' "false"
+assert_json "has vite" "${options_output}" '.categories.frontend.items.vite'
+
+# New app items
+assert_json "has python-fastapi" "${options_output}" '.categories.app.items["python-fastapi"]'
+assert_json "has rust" "${options_output}" '.categories.app.items.rust'
+
+# New service items
+assert_json "has nats" "${options_output}" '.categories.services.items.nats'
+assert_json "has minio" "${options_output}" '.categories.services.items.minio'
+
+# New tooling items
+assert_json "has db-ui" "${options_output}" '.categories.tooling.items["db-ui"]'
+assert_json "has swagger-ui" "${options_output}" '.categories.tooling.items["swagger-ui"]'
 
 # ══════════════════════════════════════════════════════════════════════════
 # --bootstrap validation tests
@@ -274,6 +292,26 @@ assert_json "CONFLICT code present" "${conflict_errors}" '.[] | select(.code == 
 # INVALID_OVERRIDE
 result=$(run_bootstrap "${FIXTURES}/invalid-override.json")
 assert_json "INVALID_OVERRIDE" "${result}" '.errors[] | select(.code == "INVALID_OVERRIDE")'
+
+# ── Port collision checks ─────────────────────────────────────────────────
+
+# Check 11: port collision on defaults (node-express + go both default to 3000)
+result=$(run_bootstrap "${FIXTURES}/port-conflict-default.json")
+assert_json "PORT_CONFLICT (default)" "${result}" '.errors[] | select(.code == "PORT_CONFLICT")'
+assert_json_eq "PORT_CONFLICT mentions port 3000" "${result}" \
+    '.errors[] | select(.code == "PORT_CONFLICT") | .message | test("3000")' "true"
+
+# Check 11: port collision via override (node-express overridden to 5432 = postgres default)
+result=$(run_bootstrap "${FIXTURES}/port-conflict-override.json")
+assert_json_eq "PORT_CONFLICT (override): exactly 1 error" "${result}" '.errors | length' "1"
+assert_json_eq "PORT_CONFLICT (override): code" "${result}" '.errors[0].code' "PORT_CONFLICT"
+assert_json_eq "PORT_CONFLICT (override): mentions port 5432" "${result}" \
+    '.errors[0].message | test("5432")' "true"
+
+# Check 11: override resolves collision (go port overridden to 3001 — no conflict)
+result=$(run_bootstrap "${FIXTURES}/port-conflict-resolved.json")
+assert_json "PORT_CONFLICT resolved: no port conflict" "${result}" \
+    '(.errors // [] | map(select(.code == "PORT_CONFLICT")) | length) == 0'
 
 # ── Edge cases ───────────────────────────────────────────────────────────
 
