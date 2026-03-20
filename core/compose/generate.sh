@@ -82,6 +82,11 @@ fi
 # ---------------------------------------------------------------------------
 APP_SOURCE_ABS="${DEVSTACK_DIR}/${APP_SOURCE#./}"
 
+FRONTEND_SOURCE_ABS=""
+if [ -n "${FRONTEND_TYPE:-}" ] && [ "${FRONTEND_TYPE}" != "none" ]; then
+    FRONTEND_SOURCE_ABS="${DEVSTACK_DIR}/${FRONTEND_SOURCE#./}"
+fi
+
 # ---------------------------------------------------------------------------
 # Build extras services
 # ---------------------------------------------------------------------------
@@ -201,6 +206,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Build frontend service from template (if configured)
+# ---------------------------------------------------------------------------
+FRONTEND_SERVICE=""
+if [ -n "${FRONTEND_TYPE:-}" ] && [ "${FRONTEND_TYPE}" != "none" ]; then
+    frontend_template="${DEVSTACK_DIR}/templates/frontends/${FRONTEND_TYPE}/service.yml"
+    if [ -f "${frontend_template}" ]; then
+        FRONTEND_SERVICE=$(cat "${frontend_template}" | \
+            sed "s|\${PROJECT_NAME}|${PROJECT_NAME}|g" | \
+            sed "s|\${FRONTEND_SOURCE}|${FRONTEND_SOURCE_ABS}|g" | \
+            sed "s|\${FRONTEND_API_PREFIX}|${FRONTEND_API_PREFIX:-/api}|g" | \
+            sed "s|\${HTTPS_PORT}|${HTTPS_PORT}|g")
+    else
+        echo "[compose-gen] WARNING: No frontend template found at ${frontend_template}"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Assemble docker-compose.yml
 # ---------------------------------------------------------------------------
 cat > "${OUTPUT_FILE}" <<COMPOSE_HEAD
@@ -247,6 +269,18 @@ ${APP_SERVICE}
       - ${DEVSTACK_DIR}/tests/results:/srv/test-results:ro
 COMPOSE_HEAD
 
+# Frontend service (if configured)
+if [ -n "${FRONTEND_SERVICE}" ]; then
+    cat >> "${OUTPUT_FILE}" <<COMPOSE_FRONTEND
+
+  # ---------------------------------------------------------------------------
+  # Frontend Dev Server
+  # ---------------------------------------------------------------------------
+${FRONTEND_SERVICE}
+
+COMPOSE_FRONTEND
+fi
+
 # Add app source volume mount for web if PHP (serves static files)
 if [ "${APP_TYPE}" = "php-laravel" ]; then
     cat >> "${OUTPUT_FILE}" <<COMPOSE_WEB_PHP
@@ -254,12 +288,19 @@ if [ "${APP_TYPE}" = "php-laravel" ]; then
 COMPOSE_WEB_PHP
 fi
 
+FRONTEND_DEPENDS=""
+if [ -n "${FRONTEND_SERVICE}" ]; then
+    FRONTEND_DEPENDS="
+      frontend:
+        condition: service_started"
+fi
+
 cat >> "${OUTPUT_FILE}" <<COMPOSE_WEB_NET
     depends_on:
       cert-gen:
         condition: service_completed_successfully
       app:
-        condition: service_started${DB_DEPENDS}
+        condition: service_started${DB_DEPENDS}${FRONTEND_DEPENDS}
     networks:
       ${PROJECT_NAME}-internal:
         aliases:
@@ -397,4 +438,5 @@ COMPOSE_FOOTER
 echo "[compose-gen] Generated ${OUTPUT_FILE}"
 echo "[compose-gen] Services: cert-gen, app, web (caddy), wiremock, tester, test-dashboard"
 [ -n "${DB_SERVICE}" ] && echo "[compose-gen] Database: ${DB_TYPE}"
+[ -n "${FRONTEND_SERVICE}" ] && echo "[compose-gen] Frontend: ${FRONTEND_TYPE}"
 [ -n "${EXTRAS_SERVICES}" ] && echo "[compose-gen] Extras: ${EXTRAS}"

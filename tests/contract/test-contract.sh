@@ -213,7 +213,7 @@ assert_json_eq "preset count is 4"  "${options_output}" '.presets | keys | lengt
 # Wiring rules
 assert_json "has wiring"          "${options_output}" '.wiring'
 assert_json_eq "wiring rule count" "${options_output}" '.wiring | length' "6"
-assert_json_eq "first wiring targets vite proxy" "${options_output}" '.wiring[0].set' "frontend.vite.proxy_target"
+assert_json_eq "first wiring targets vite api_base" "${options_output}" '.wiring[0].set' "frontend.vite.api_base"
 
 # ══════════════════════════════════════════════════════════════════════════
 # --bootstrap validation tests
@@ -543,6 +543,34 @@ PAYLOAD
     )
     assert_json "obs: grafana requires prometheus" "${grafana_only_result}" \
         '.errors[] | select(.code == "MISSING_DEPENDENCY")'
+
+    # ── Test 8: Frontend generation ──────────────────────────────────────
+
+    printf '\n=== Frontend Generation ===\n'
+
+    rm -rf "${DEVSTACK_DIR}/.generated"
+    rm -rf "${DEVSTACK_DIR}/frontend"
+
+    result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/valid-with-frontend-full.json" 2>/dev/null)
+    gen_exit=$?
+
+    assert_eq "frontend: exits 0" "0" "${gen_exit}"
+    assert_json_eq "frontend: status ok" "${result}" '.status' "ok"
+
+    # Check project.env has frontend vars
+    assert_eq "frontend: FRONTEND_TYPE in project.env" "true" "$(grep -q 'FRONTEND_TYPE=vite' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
+    assert_eq "frontend: FRONTEND_SOURCE in project.env" "true" "$(grep -q 'FRONTEND_SOURCE=./frontend' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
+    assert_eq "frontend: FRONTEND_PORT in project.env" "true" "$(grep -q 'FRONTEND_PORT=5173' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
+
+    # Check wiring resolved
+    assert_json "frontend: wiring has api_base" "${result}" '.wiring["frontend.vite.api_base"]'
+
+    # Check frontend directory scaffolded
+    assert_eq "frontend: frontend/ created" "true" "$([ -d "${DEVSTACK_DIR}/frontend" ] && echo true || echo false)"
+    assert_eq "frontend: frontend/package.json created" "true" "$([ -f "${DEVSTACK_DIR}/frontend/package.json" ] && echo true || echo false)"
+
+    # Clean up frontend scaffold
+    rm -rf "${DEVSTACK_DIR}/frontend"
 
     # ── Cleanup (trap handles restore_state) ──────────────────────────────
 fi

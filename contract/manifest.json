@@ -87,7 +87,7 @@
         "vite": {
           "label": "Frontend Dev Server (Vite)",
           "description": "Vite dev server with HMR, configurable API proxy to backend",
-          "defaults": { "port": 5173, "proxy_target": "" }
+          "defaults": { "port": 5173, "api_base": "/api" }
         }
       }
     },
@@ -206,8 +206,8 @@
   "wiring": [
     {
       "when": ["frontend.vite", "app.*"],
-      "set": "frontend.vite.proxy_target",
-      "template": "http://{app.*}:{app.*.port}"
+      "set": "frontend.vite.api_base",
+      "template": "/api"
     },
     {
       "when": ["app.*", "services.redis"],

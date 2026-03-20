@@ -1,0 +1,20 @@
+  frontend:
+    build:
+      context: ${FRONTEND_SOURCE}
+      dockerfile: Dockerfile
+    container_name: ${PROJECT_NAME}-frontend
+    volumes:
+      - ${FRONTEND_SOURCE}:/app
+      - /app/node_modules
+      - ${PROJECT_NAME}-certs:/certs:ro
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+      - NODE_EXTRA_CA_CERTS=/certs/ca.crt
+      - VITE_API_BASE=${FRONTEND_API_PREFIX}
+      - VITE_HMR_PORT=${HTTPS_PORT}
+    depends_on:
+      cert-gen:
+        condition: service_completed_successfully
+    networks:
+      - ${PROJECT_NAME}-internal

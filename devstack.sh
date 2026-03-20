@@ -1314,6 +1314,15 @@ generate_from_bootstrap() {
          (.selections.observability // {} | keys[]),
          (.selections.tooling // {} | keys[] | select(. != "qa" and . != "qa-dashboard" and . != "wiremock" and . != "devcontainer"))] | join(",")')
 
+    # Extract frontend type
+    local frontend_type
+    frontend_type=$(printf '%s\n' "${payload}" | jq -r '.selections.frontend // {} | keys[0] // "none"')
+
+    local frontend_port=5173
+    if printf '%s\n' "${payload}" | jq -e '.selections.frontend.vite.overrides.port' &>/dev/null; then
+        frontend_port=$(printf '%s\n' "${payload}" | jq -r '.selections.frontend.vite.overrides.port')
+    fi
+
     # Derive database port
     local db_port=3306
     case "${db_type}" in
@@ -1389,6 +1398,11 @@ DB_PASSWORD=secret
 DB_ROOT_PASSWORD=root
 
 EXTRAS=${extras}
+
+FRONTEND_TYPE=${frontend_type}
+FRONTEND_SOURCE=./frontend
+FRONTEND_PORT=${frontend_port}
+FRONTEND_API_PREFIX=/api
 ENV
 
     # ── 1b. Resolve wiring rules and append to project.env ────────────────
@@ -1436,6 +1450,39 @@ echo "[init] App initialization starting..."
 echo "[init] Done."
 INIT_SH
         chmod +x "${DEVSTACK_DIR}/app/init.sh"
+    fi
+
+    # ── Scaffold frontend directory (if frontend selected) ─────────────────
+    if [ "${frontend_type}" != "none" ]; then
+        log "Scaffolding frontend directory..." >&2
+        mkdir -p "${DEVSTACK_DIR}/frontend"
+
+        # Copy Dockerfile from template
+        local frontend_dockerfile="${DEVSTACK_DIR}/templates/frontends/${frontend_type}/Dockerfile"
+        if [ -f "${frontend_dockerfile}" ]; then
+            cp "${frontend_dockerfile}" "${DEVSTACK_DIR}/frontend/Dockerfile"
+            log "  Copied frontend Dockerfile from templates/frontends/${frontend_type}/" >&2
+        fi
+
+        # Create minimal package.json if not present
+        if [ ! -f "${DEVSTACK_DIR}/frontend/package.json" ]; then
+            cat > "${DEVSTACK_DIR}/frontend/package.json" <<FRONTPKG
+{
+  "name": "${project_name}-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
+FRONTPKG
+            log "  Created frontend/package.json" >&2
+        fi
     fi
 
     # ── 3. Mocks directory (if wiremock selected) ──────────────────────────
