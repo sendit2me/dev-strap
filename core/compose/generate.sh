@@ -94,7 +94,11 @@ $(cat "${extra_file}" | \
             sed "s|\${DB_NAME}|${DB_NAME}|g" | \
             sed "s|\${DB_USER}|${DB_USER}|g" | \
             sed "s|\${DB_PASSWORD}|${DB_PASSWORD}|g" | \
-            sed "s|\${MAILPIT_PORT}|${MAILPIT_PORT:-8025}|g")"
+            sed "s|\${MAILPIT_PORT}|${MAILPIT_PORT:-8025}|g" | \
+            sed "s|\${DEVSTACK_DIR}|${DEVSTACK_DIR}|g" | \
+            sed "s|\${PROMETHEUS_PORT}|${PROMETHEUS_PORT:-9090}|g" | \
+            sed "s|\${GRAFANA_PORT}|${GRAFANA_PORT:-3001}|g" | \
+            sed "s|\${DOZZLE_PORT}|${DOZZLE_PORT:-9999}|g")"
         EXTRAS_DEPENDS="${EXTRAS_DEPENDS}
       ${extra}:
         condition: service_healthy"

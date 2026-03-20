@@ -1,0 +1,18 @@
+{
+  "contract": "devstrap-bootstrap",
+  "version": "1",
+  "project": "override-test",
+  "selections": {
+    "app": {
+      "node-express": { "overrides": { "port": 4000 } }
+    },
+    "database": {
+      "mariadb": {}
+    },
+    "tooling": {
+      "qa": {},
+      "qa-dashboard": { "overrides": { "port": 9001 } },
+      "wiremock": { "overrides": { "port": 9443 } }
+    }
+  }
+}

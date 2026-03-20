@@ -1,0 +1,10 @@
+{
+  "contract": "devstrap-bootstrap",
+  "version": "99",
+  "project": "test-project",
+  "selections": {
+    "app": {
+      "node-express": {}
+    }
+  }
+}

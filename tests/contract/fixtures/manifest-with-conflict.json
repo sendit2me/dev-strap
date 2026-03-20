@@ -1,0 +1,40 @@
+{
+  "contract": "devstrap-options",
+  "version": "1",
+  "categories": {
+    "app": {
+      "label": "Application",
+      "description": "Development application template",
+      "selection": "multi",
+      "required": true,
+      "items": {
+        "node-express": {
+          "label": "Node.js (Express)",
+          "description": "Express API with hot reload",
+          "defaults": { "port": 3000 }
+        }
+      }
+    },
+    "services": {
+      "label": "Additional Services",
+      "description": "Supporting infrastructure for development",
+      "selection": "multi",
+      "required": false,
+      "items": {
+        "redis": {
+          "label": "Redis",
+          "description": "Cache / queue / session store",
+          "defaults": { "port": 6379 },
+          "requires": ["app.*"],
+          "conflicts": ["services.memcached"]
+        },
+        "memcached": {
+          "label": "Memcached",
+          "description": "In-memory cache",
+          "defaults": { "port": 11211 },
+          "conflicts": ["services.redis"]
+        }
+      }
+    }
+  }
+}

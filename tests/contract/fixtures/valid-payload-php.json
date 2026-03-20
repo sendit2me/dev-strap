@@ -1,0 +1,13 @@
+{
+  "contract": "devstrap-bootstrap",
+  "version": "1",
+  "project": "php-test",
+  "selections": {
+    "app": {
+      "php-laravel": {}
+    },
+    "database": {
+      "mariadb": {}
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "contract": "devstrap-bootstrap",
+  "version": "1",
+  "project": "Invalid Name!",
+  "selections": {
+    "app": {
+      "node-express": {}
+    }
+  }
+}
