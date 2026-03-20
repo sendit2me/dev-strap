@@ -93,7 +93,7 @@ elif [ -n "${FRONTEND_TYPE:-}" ]; then
 localhost:80, localhost:443, ${PROJECT_NAME}.local:80, ${PROJECT_NAME}.local:443 {
     tls /certs/server.crt /certs/server.key
 
-    handle_path ${FRONTEND_API_PREFIX}/* {
+    handle ${FRONTEND_API_PREFIX}/* {
         reverse_proxy app:3000
     }
 
