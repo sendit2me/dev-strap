@@ -1,8 +1,22 @@
 # Catalog Expansion Implementation Plan
 
-> **Generated from**: Research documents 01-05 in `docs/research/`
-> **Date**: 2026-03-20
+> **Generated from**: Research documents 01-10 in `docs/research/`
+> **Date**: 2026-03-20 (revised after Caddy research)
 > **Contract impact**: All changes are v1-compatible (additive). No breaking changes.
+
+---
+
+## Status
+
+| Phase | Status | Commit |
+|-------|--------|--------|
+| Phase 1: Foundation | DONE | `4643faa` |
+| Phase 2: New Services (NATS, MinIO, Adminer, Swagger UI) | DONE | `4643faa` |
+| Phase 3: New Languages (Python/FastAPI, Rust) | DONE | `4643faa` |
+| Phase 4: Presets & Auto-Wiring | DONE | `9ea545a` |
+| Phase 5a: Caddy Swap (replace nginx) | NEXT | |
+| Phase 5b: Frontend/Vite (leveraging Caddy) | NEXT | |
+| Phase 6: Documentation | PENDING | |
 
 ---
 
@@ -12,12 +26,16 @@
 |----------|--------|-----------|
 | Frontend category | Separate `frontend` category | Semantic clarity, cleaner auto-wiring, better PowerHouse UX |
 | Frontend template dir | `templates/frontends/vite/` | Reinforces frontend/backend distinction |
-| Vite port exposure | Direct (5173), not proxied through nginx | Avoids HMR/WebSocket complexity, matches standard Vite workflow |
+| **Reverse proxy** | **Caddy v2 replaces nginx** | Eliminates all protocol branching (FastCGI, WebSocket, gRPC handled natively). Generator shrinks from ~207 to ~130 lines, config from ~80 to ~20 lines. |
+| **Vite routing** | **Through Caddy (path-based)** — revised from direct exposure | Caddy handles WebSocket HMR natively, so original reason for direct exposure is gone. Single entry point, no CORS. |
+| **PHP-FPM edge case** | **Eliminated by Caddy** | `php_fastcgi` handles protocol translation; Vite wiring doesn't need to know about it |
+| **proxy_protocol field** | **Not needed** | With Caddy, there is no protocol branching. One exception (PHP) doesn't justify an abstraction; Caddy handles it natively. Trigger: add the field if/when a second non-HTTP protocol appears that Caddy can't handle. |
 | Contract version | Stay v1, all additions are non-breaking | Presets, wiring, port detection, new categories are all additive |
 | Auto-wiring approach | Top-level `wiring` array in manifest (Proposal C from research 04) | Keeps `defaults` flat/scalar, declarative, no contract version bump |
 | Python package manager | `uv` (by Astral) | 10-100x faster than pip, excellent Docker layer caching |
 | Rust build cache | Persistent `cargo-target` volume | Without it, 5-30 min recompile on every restart |
-| Beaver | Deferred — no clear match found | Needs clarification from user |
+| Beaver / DBeaver | Adminer chosen over CloudBeaver | CloudBeaver: 500MB image, 400MB RAM, complex config. Adminer: 30MB, 10MB RAM, zero config. |
+| **Cert restart** | **Acceptable** | New mock domains require cert regen → Caddy restart. Caddy is stateless; lost packets during dev restart are fine. |
 
 ---
 
@@ -161,43 +179,92 @@
 
 ---
 
-## Phase 5: Multi-App — Vite Frontend
+## Phase 5a: Caddy Swap (replace nginx)
 
-*Goal: Support frontend + backend simultaneously. The capstone.*
+*Goal: Replace nginx with Caddy v2. Eliminates all protocol branching.*
 
-### 5.1 Frontend Category in Manifest
-- **What**: Add `frontend` category (selection: single, required: false)
-- **Items**: `vite` (port 5173, proxy_target default empty)
+> **Why the swap**: nginx requires separate directives for HTTP (`proxy_pass`), FastCGI (`fastcgi_pass`), gRPC (`grpc_pass`), and WebSocket (manual upgrade headers). This creates protocol special-casing in the generator. Caddy's `reverse_proxy` handles HTTP, WebSocket, and gRPC automatically. `php_fastcgi` handles PHP-FPM. Zero branching.
+>
+> **Research**: `07-traefik-v3-evaluation.md` (Traefik rejected), `08-caddy-deep-dive.md`, `09-caddy-generator-design.md`
+
+### 5a.1 Caddyfile Generator
+- **What**: Create `core/caddy/generate-caddyfile.sh` (~130 lines, replacing nginx's ~207)
+- **How**: Same input pattern (reads project.env + mocks/*/domains), outputs `.generated/Caddyfile`
+- **App routing**: `php_fastcgi app:9000` for PHP, `reverse_proxy app:3000` for all others. No protocol branching — just a simple app-type check for the Caddy directive name.
+- **Mock interception**: Same flow — TLS termination, `header_up X-Original-Host {http.request.host}`, proxy to WireMock
+- **TLS**: `tls /certs/server.crt /certs/server.key` + `auto_https off` (use our certs, not ACME)
+- **Output**: ~20 lines of Caddyfile vs ~80 lines of nginx.conf
+- **Files**: `core/caddy/generate-caddyfile.sh` (new)
+
+### 5a.2 Compose Generator Update
+- **What**: Change `web` service from nginx to Caddy
+- **Image**: `caddy:2-alpine` (replaces `nginx:alpine`)
+- **Config mount**: `.generated/Caddyfile:/etc/caddy/Caddyfile:ro` (replaces nginx.conf mount)
+- **Cert mount**: `/certs` (same path — Caddy reads from there)
+- **Health check**: `wget --spider http://localhost:2019/config/` (Caddy admin API)
+- **Service name stays `web`**: Zero template changes needed
+- **Files**: `core/compose/generate.sh` (modify web service block)
+
+### 5a.3 devstack.sh Updates
+- **What**: Point `cmd_generate()` to new Caddy generator (~4 lines changed)
+- **Cert-gen stays**: Caddy refuses to start without certs; existing depends_on handles ordering
+- **Cert-gen slimming** (optional): Drop JKS generation, switch from `eclipse-temurin:17-alpine` (~200MB) to `alpine:3` (~7MB)
+- **Operational note**: New mock domains require cert regen → `./devstack.sh restart` (same as nginx). Caddy is stateless; restart is clean.
+- **Files**: `devstack.sh`
+
+### 5a.4 Retire nginx Generator
+- **What**: Remove or archive `core/nginx/generate-conf.sh`
+- **Keep tests**: All existing tests should pass with Caddy (same service names, same ports)
+
+---
+
+## Phase 5b: Frontend/Vite (leveraging Caddy)
+
+*Goal: Support frontend + backend simultaneously. Caddy makes this clean.*
+
+> **Key change from original plan**: Everything routes through Caddy (not direct port exposure). Caddy handles WebSocket HMR natively, so the original reason for direct exposure is gone. Single entry point on `localhost:8080`.
+>
+> **Research**: `03-vite-multiapp-architecture.md` (original), `10-integrated-caddy-vite-design.md` (revised)
+
+### 5b.1 Vite Template
+- **Dir**: `templates/frontends/vite/`
+- **Dockerfile**: `node:22-alpine`, `npm install`, `CMD ["npx", "vite", "--host", "0.0.0.0"]`
+- **service.yml**: Service named `frontend`, NO host port exposure (Caddy proxies), `node_modules` anonymous volume, `VITE_API_BASE=/api` env var
+- **HMR**: Caddy forwards WebSocket upgrade automatically; set `VITE_HMR_PORT=${HTTPS_PORT}` for client-side connection
+- **Files**: `templates/frontends/vite/Dockerfile`, `service.yml`
+
+### 5b.2 Compose Generator Frontend Section
+- **What**: Add frontend service block (~20 new lines in compose generator)
+- **How**: Conditional on `FRONTEND_TYPE != none` — read template, substitute vars, write to compose
+- **Caddy depends_on**: Add `frontend` to Caddy's depends_on when present
+- **Files**: `core/compose/generate.sh`
+
+### 5b.3 Caddyfile Path-Based Routing
+- **What**: When frontend is configured, Caddy routes: `/api/*` → backend, `/*` → frontend
+- **How**: Add conditional block in Caddyfile generator
+- **HMR**: Caddy's `reverse_proxy` forwards WebSocket upgrade headers automatically
+- **PHP-FPM edge case**: Gone — Caddy handles `php_fastcgi` transparently, Vite doesn't need to know about it
+- **Files**: `core/caddy/generate-caddyfile.sh`
+
+### 5b.4 devstack.sh Frontend Support
+- **What**: Extract frontend from bootstrap payload, scaffold frontend directory
+- **generate_from_bootstrap()**: Extract `frontend_type`, write `FRONTEND_TYPE`, `FRONTEND_SOURCE`, `FRONTEND_PORT` to project.env, copy Dockerfile from template
+- **cmd_start()**: Frontend directory existence check + summary output
+- **Files**: `devstack.sh`
+
+### 5b.5 Wiring Rule Updates
+- **What**: Update Vite wiring rule — `proxy_target` becomes `api_base = /api`
+- **Why**: Since Caddy handles routing, Vite doesn't need a full URL to the backend. It just needs the path prefix.
+- **PHP edge case wiring**: Not needed — Caddy handles FastCGI natively
 - **Files**: `contract/manifest.json`
 
-### 5.2 Vite Template
-- **Image**: `node:22-alpine`
-- **Port**: 5173 (exposed directly to host, NOT through nginx)
-- **HMR**: `CHOKIDAR_USEPOLLING=true` for Docker volume watching
-- **Proxy**: Vite's `server.proxy` in `vite.config.ts` forwards `/api` to backend
-- **Auto-wire**: `VITE_API_URL` injected via wiring rules (Phase 4.2)
-- **PHP edge case**: When Vite + PHP-Laravel co-selected, proxy target = `http://web:80` (through nginx, not direct to FPM)
-- **Files**: `templates/frontends/vite/Dockerfile`, `service.yml`
-- **Research**: `03-vite-multiapp-architecture.md`
+### 5b.6 Tests
+- **Fixtures**: Frontend bootstrap payloads
+- **Assertions**: Verify compose output includes `frontend` service, Caddyfile has path-based routing, wiring resolves correctly
+- **Files**: `tests/contract/test-contract.sh`, `tests/contract/fixtures/`
 
-### 5.3 Compose Generator Multi-App Support
-- **What**: Detect `frontend` category selections, generate a second service named `frontend`
-- **Changes to `core/compose/generate.sh`**:
-  - New section after app service assembly (~40-60 new lines)
-  - Read `templates/frontends/${FRONTEND_TYPE}/service.yml`
-  - Variable substitution for `${FRONTEND_PORT}`, `${PROXY_TARGET}`, etc.
-  - Add `frontend` to depends_on for tester if present
-  - Volume registration for frontend
-- **Changes to `devstack.sh`**:
-  - `generate_from_bootstrap()`: Extract frontend selections, set `FRONTEND_TYPE` in project.env
-  - `project.env`: Add `FRONTEND_TYPE`, `FRONTEND_PORT` variables
-- **Backward compatible**: No changes to existing single-app flow
-- **Research**: `03-vite-multiapp-architecture.md` §6, §8
-
-### 5.4 Fix Latent `app` Multi-Select Bug
-- **What**: `app` category says `selection: multi` but `generate_from_bootstrap()` only uses `keys[0]`
-- **Fix**: Change `app` to `selection: single` (backend is singular) since `frontend` is now its own category
-- **Research**: `03-vite-multiapp-architecture.md` finding
+### 5b.7 Fix app Multi-Select (DONE in Phase 1.4)
+- Already changed `app` to `selection: single` in manifest
 
 ---
 
@@ -213,24 +280,25 @@
 - All changes are additive (v1 compatible)
 - PowerHouse can ignore new keys (`presets`, `wiring`, `frontend` category) until ready
 - Port collision errors are new but follow existing error format
+- nginx → Caddy is an internal change, no contract impact
 
 ### 6.3 Updated Docs
 - `docs/ADDING_SERVICES.md` — update with NATS/MinIO examples
 - `docs/CREATING_TEMPLATES.md` — add Python/Rust sections
-- `README.md` — update catalog table
+- `README.md` — update catalog table, note Caddy as reverse proxy
 
 ---
 
 ## Execution Order
 
 ```
-Phase 1 (Foundation)
+Phase 1 (Foundation) ✅
 ├── 1.1 Port collision detection
 ├── 1.2 Volume accumulator pattern
 ├── 1.3 App volume case statement
 └── 1.4 Manifest new categories
          │
-Phase 2 (Services) ──────────────── Phase 3 (Languages)
+Phase 2 (Services) ✅ ──────────── Phase 3 (Languages) ✅
 ├── 2.1 NATS                        ├── 3.1 Python/FastAPI
 ├── 2.2 MinIO                       └── 3.2 Rust
 ├── 2.3 Adminer                          │
@@ -238,21 +306,29 @@ Phase 2 (Services) ──────────────── Phase 3 (Lan
          │                               │
          └───────────┬───────────────────┘
                      │
-Phase 4 (Presets & Wiring)
+Phase 4 (Presets & Wiring) ✅
 ├── 4.1 Preset bundles
 └── 4.2 Auto-wiring rules
          │
-Phase 5 (Multi-App)
-├── 5.1 Frontend category
-├── 5.2 Vite template
-├── 5.3 Compose generator multi-app
-└── 5.4 Fix app multi-select
+Phase 5a (Caddy Swap) ← NEXT
+├── 5a.1 Caddyfile generator
+├── 5a.2 Compose generator update
+├── 5a.3 devstack.sh updates
+└── 5a.4 Retire nginx generator
+         │
+Phase 5b (Frontend/Vite)
+├── 5b.1 Vite template
+├── 5b.2 Compose frontend section
+├── 5b.3 Caddyfile path-based routing
+├── 5b.4 devstack.sh frontend support
+├── 5b.5 Wiring rule updates
+└── 5b.6 Tests
          │
 Phase 6 (Docs)
 └── Ships incrementally with each phase
 ```
 
-Phases 2 and 3 can run in parallel. All other phases are sequential.
+Phases 2 and 3 ran in parallel. 5a → 5b is sequential (Caddy first, then frontend on top).
 
 ---
 
@@ -262,7 +338,7 @@ Phases 2 and 3 can run in parallel. All other phases are sequential.
 |---------|------|----------|----------|
 | App backends (Node/Go/Python/Rust) | 3000 | app | internal only |
 | App (PHP-FPM) | 9000 | app | internal only |
-| Vite frontend | 5173 | frontend | `FRONTEND_PORT` |
+| Vite frontend | 5173 | frontend | internal (Caddy proxies) |
 | PostgreSQL | 5432 | database | internal only |
 | MariaDB | 3306 | database | internal only |
 | Redis | 6379 | services | internal only |
@@ -272,8 +348,9 @@ Phases 2 and 3 can run in parallel. All other phases are sequential.
 | NATS monitor | 8222 | services | `NATS_MONITOR_PORT` |
 | MinIO API | 9000 | services | `MINIO_PORT` |
 | MinIO Console | 9001 | services | `MINIO_CONSOLE_PORT` |
-| HTTP (nginx) | 8080 | core | `HTTP_PORT` |
-| HTTPS (nginx) | 8443 | core | `HTTPS_PORT` |
+| HTTP (Caddy) | 8080 | core | `HTTP_PORT` |
+| HTTPS (Caddy) | 8443 | core | `HTTPS_PORT` |
+| Caddy Admin API | 2019 | core | internal only |
 | WireMock | — | tooling | internal only |
 | QA Dashboard | 8082 | tooling | `TEST_DASHBOARD_PORT` |
 | Adminer | 8083 | tooling | `ADMINER_PORT` |
