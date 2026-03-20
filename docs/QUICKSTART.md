@@ -1,4 +1,4 @@
-# DevStack Quickstart
+# DevStrap Quickstart
 
 ## Prerequisites
 
@@ -7,10 +7,10 @@
 
 ## Try the included example (2 minutes)
 
-The devstack ships with a working Node.js example app that calls two mocked external APIs.
+DevStrap ships with a working Node.js example app that calls two mocked external APIs.
 
 ```bash
-cd devstack/
+cd dev-strap/
 ./devstack.sh start
 ```
 
@@ -39,6 +39,29 @@ Tear it all down:
 Everything is removed — containers, volumes, generated config, test results. Next `start` is a clean slate.
 
 ## Set up your own project
+
+### Option A: Use a preset
+
+Presets give you a curated stack in one step:
+
+```bash
+./devstack.sh init --preset full-stack    # Vite + API + DB + Redis + monitoring
+./devstack.sh init --preset spa-api       # Vite + API + DB + QA + mocking
+./devstack.sh init --preset api-only      # API + DB + Redis + Swagger UI
+./devstack.sh init --preset data-pipeline # Python + DB + NATS + MinIO
+```
+
+The wizard will prompt for your app type (Node.js, PHP, Go, Python, or Rust) and project name, then generate everything.
+
+### Option B: Interactive wizard
+
+```bash
+./devstack.sh init
+```
+
+Walk through each choice: app template, frontend (Vite), database, services (Redis, Mailpit, NATS, MinIO), tooling, and observability.
+
+### Option C: Manual configuration
 
 See [PROJECT_SETUP.md](PROJECT_SETUP.md) for the full walkthrough.
 
@@ -80,9 +103,9 @@ See [PROJECT_SETUP.md](PROJECT_SETUP.md) for the full walkthrough.
 | Set up my own project from scratch | [PROJECT_SETUP.md](PROJECT_SETUP.md) |
 | Mock an external API | [ADDING_MOCKS.md](ADDING_MOCKS.md) |
 | Record real API responses as mocks | [ADDING_MOCKS.md](ADDING_MOCKS.md#recording-real-api-responses) |
-| Add a custom service (Redis, Mailpit, etc.) | [ADDING_SERVICES.md](ADDING_SERVICES.md) |
+| Add a service (Redis, NATS, MinIO, Mailpit) | [ADDING_SERVICES.md](ADDING_SERVICES.md) |
 | Write and run tests | [TESTING.md](TESTING.md) |
 | Set up VS Code dev containers | [DEVELOPMENT.md](DEVELOPMENT.md) |
-| Create a new app template (Rust, Python, etc.) | [CREATING_TEMPLATES.md](CREATING_TEMPLATES.md) |
+| Create a new app template | [CREATING_TEMPLATES.md](CREATING_TEMPLATES.md) |
 | Understand how it all works | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Debug something that isn't working | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |

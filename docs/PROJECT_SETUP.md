@@ -11,7 +11,7 @@ Edit `project.env` to match your project:
 PROJECT_NAME=my-saas-app
 
 # App type — must match a directory in templates/apps/
-# Options: node-express, php-laravel, go
+# Options: node-express, php-laravel, go, python-fastapi, rust
 APP_TYPE=node-express
 
 # Path to your app source code, relative to devstack/
@@ -45,8 +45,8 @@ Every port in `project.env` maps `localhost:<PORT>` on your machine to the corre
 ```
 Your machine                    Docker network
 ─────────────                   ──────────────
-localhost:8080  ──────────────▶ nginx:80     ──▶ app container
-localhost:8443  ──────────────▶ nginx:443    ──▶ app container (or WireMock for mocked domains)
+localhost:8080  ──────────────▶ caddy:80     ──▶ app container
+localhost:8443  ──────────────▶ caddy:443    ──▶ app container (or WireMock for mocked domains)
 localhost:8082  ──────────────▶ test-dashboard:8080
 ```
 

@@ -235,6 +235,7 @@ Exit code non-zero. JSON to stdout.
 | `CONFLICT` | Two conflicting items are both selected. |
 | `INVALID_OVERRIDE` | An override key doesn't exist in the item's defaults. |
 | `INVALID_PROJECT_NAME` | Project name doesn't match `[a-z][a-z0-9-]*`. |
+| `PORT_CONFLICT` | Two or more selected items resolve to the same port. |
 
 ---
 
@@ -250,11 +251,25 @@ devstack.sh --options
 {
   "contract": "devstrap-options",
   "version": "1",
+  "presets": {
+    "spa-api": {
+      "label": "SPA + API",
+      "description": "Frontend SPA with API backend, database, testing, and mocking",
+      "selections": { "frontend": ["vite"], "database": ["postgres"], "tooling": ["qa", "wiremock"] },
+      "prompts": ["app"]
+    },
+    "api-only": {
+      "label": "API Service",
+      "description": "Backend API with database, caching, testing, and API docs",
+      "selections": { "database": ["postgres"], "services": ["redis"], "tooling": ["qa", "swagger-ui"] },
+      "prompts": ["app"]
+    }
+  },
   "categories": {
     "app": {
       "label": "Application",
       "description": "Development application template",
-      "selection": "multi",
+      "selection": "single",
       "required": true,
       "items": {
         "node-express": {
@@ -262,15 +277,33 @@ devstack.sh --options
           "description": "Express API with hot reload",
           "defaults": { "port": 3000 }
         },
-        "rust": {
-          "label": "Rust",
-          "description": "Cargo workspace with watch",
-          "defaults": { "port": 8080 }
-        },
         "go": {
           "label": "Go",
-          "description": "Go module with Air reload",
+          "description": "Go module with Air live reload",
           "defaults": { "port": 3000 }
+        },
+        "python-fastapi": {
+          "label": "Python (FastAPI)",
+          "description": "FastAPI with uvicorn hot reload",
+          "defaults": { "port": 3000 }
+        },
+        "rust": {
+          "label": "Rust",
+          "description": "Rust with cargo-watch live reload",
+          "defaults": { "port": 3000 }
+        }
+      }
+    },
+    "frontend": {
+      "label": "Frontend",
+      "description": "Frontend development server",
+      "selection": "single",
+      "required": false,
+      "items": {
+        "vite": {
+          "label": "Frontend Dev Server (Vite)",
+          "description": "Vite dev server with HMR, configurable API proxy to backend",
+          "defaults": { "port": 5173, "api_base": "/api" }
         }
       }
     },
@@ -282,7 +315,7 @@ devstack.sh --options
       "items": {
         "postgres": {
           "label": "PostgreSQL 16",
-          "description": "Relational database",
+          "description": "Relational database with Alpine image",
           "defaults": { "port": 5432 }
         },
         "mariadb": {
@@ -309,10 +342,16 @@ devstack.sh --options
           "description": "SMTP catcher with web UI",
           "defaults": { "smtp_port": 1025, "ui_port": 8025 }
         },
-        "temporal": {
-          "label": "Temporal",
-          "description": "Workflow orchestration engine",
-          "defaults": { "port": 7233, "ui_port": 8233 }
+        "nats": {
+          "label": "NATS",
+          "description": "High-performance messaging with JetStream streaming",
+          "defaults": { "client_port": 4222, "monitor_port": 8222 },
+          "requires": ["app.*"]
+        },
+        "minio": {
+          "label": "MinIO",
+          "description": "S3-compatible object storage for local development",
+          "defaults": { "api_port": 9000, "console_port": 9001 }
         }
       }
     },
@@ -329,7 +368,7 @@ devstack.sh --options
         "qa-dashboard": {
           "label": "QA Dashboard",
           "description": "Web UI for test results and reports",
-          "defaults": { "port": 9000 },
+          "defaults": { "port": 8082 },
           "requires": ["tooling.qa"]
         },
         "wiremock": {
@@ -340,17 +379,33 @@ devstack.sh --options
         "devcontainer": {
           "label": "VS Code Dev Container",
           "description": "Generates per-app devcontainer.json for VS Code Remote Containers"
+        },
+        "db-ui": {
+          "label": "Database UI (Adminer)",
+          "description": "Web-based database browser supporting PostgreSQL and MariaDB",
+          "defaults": { "port": 8083 },
+          "requires": ["database.*"]
+        },
+        "swagger-ui": {
+          "label": "API Documentation (Swagger UI)",
+          "description": "Live OpenAPI spec viewer for running backend",
+          "defaults": { "port": 8084 },
+          "requires": ["app.*"]
         }
       }
     }
-  }
+  },
+  "wiring": [
+    { "when": ["frontend.vite", "app.*"], "set": "frontend.vite.api_base", "template": "/api" },
+    { "when": ["app.*", "services.redis"], "set": "app.*.redis_url", "template": "redis://redis:6379" }
+  ]
 }
 ```
 
 ### 2. PowerHouse sends selections
 
-User chose: Node + Rust apps, PostgreSQL, Redis, Temporal, QA with dashboard,
-API mocking. Rust port overridden to 8081.
+User chose: Node.js backend, Vite frontend, PostgreSQL, Redis, QA with
+dashboard, API mocking, and database UI.
 
 ```bash
 devstack.sh --bootstrap --config selection.json
@@ -363,20 +418,22 @@ devstack.sh --bootstrap --config selection.json
   "project": "acme-platform",
   "selections": {
     "app": {
-      "node-express": {},
-      "rust": { "overrides": { "port": 8081 } }
+      "node-express": {}
+    },
+    "frontend": {
+      "vite": {}
     },
     "database": {
       "postgres": {}
     },
     "services": {
-      "redis": {},
-      "temporal": {}
+      "redis": {}
     },
     "tooling": {
       "qa": {},
       "qa-dashboard": {},
-      "wiremock": {}
+      "wiremock": {},
+      "db-ui": {}
     }
   }
 }
@@ -392,13 +449,13 @@ devstack.sh --bootstrap --config selection.json
   "project_dir": "./acme-platform",
   "services": {
     "node-express": { "port": 3000 },
-    "rust": { "port": 8081 },
+    "vite": { "port": 5173, "api_base": "/api" },
     "postgres": { "port": 5432 },
     "redis": { "port": 6379 },
-    "temporal": { "port": 7233, "ui_port": 8233 },
     "qa": {},
-    "qa-dashboard": { "port": 9000 },
-    "wiremock": { "port": 8443 }
+    "qa-dashboard": { "port": 8082 },
+    "wiremock": { "port": 8443 },
+    "db-ui": { "port": 8083 }
   },
   "commands": {
     "start": "./devstack.sh start",
@@ -478,3 +535,40 @@ PowerHouse                                dev-strap
 - How PowerHouse presents choices to the user
 - Additional informational fields on any payload (consumers must ignore
   unrecognized fields)
+
+---
+
+## Changelog
+
+### 2026-03-20 — Catalog Expansion (v1-compatible)
+
+All changes are additive. Existing PowerHouse integrations continue to work without modification.
+
+**New categories:**
+- `frontend` (selection: single, required: false) — Frontend development servers. First item: `vite`.
+
+**New items in existing categories:**
+- `app`: `python-fastapi`, `rust`
+- `services`: `nats`, `minio`
+- `tooling`: `db-ui`, `swagger-ui`
+
+**Category changes:**
+- `app.selection` changed from `multi` to `single` (backend is singular now that frontend has its own category)
+
+**New top-level keys (all optional, consumers can ignore):**
+- `presets` — Pre-configured stack bundles for fast-start UX (4 presets: spa-api, api-only, full-stack, data-pipeline)
+- `wiring` — Declarative auto-configuration rules that fire when items are co-selected (6 rules)
+
+**New validation:**
+- Check 11: `PORT_CONFLICT` — detects when two selected items default to the same port
+
+**Internal changes (no contract impact):**
+- Reverse proxy changed from nginx to Caddy v2
+- cert-gen container slimmed from eclipse-temurin:17-alpine to alpine:3 (JKS generation removed)
+
+**Migration notes for PowerHouse:**
+- All changes are backward-compatible within contract version "1"
+- The `presets` key is UI-only: PowerHouse expands presets into selections before sending `--bootstrap`
+- The `wiring` key is informational: PowerHouse can display wiring hints or ignore the key
+- The `frontend` category follows the same patterns as other categories
+- Port collision errors (`PORT_CONFLICT`) follow the existing error format

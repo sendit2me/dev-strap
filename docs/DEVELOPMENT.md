@@ -31,9 +31,9 @@ Changes are immediate. Save a file, the container picks it up:
 A file-watcher inside the container recompiles on change:
 
 - **Go**: The template includes [Air](https://github.com/air-verse/air) which watches `.go` files and rebuilds automatically. Config is in `.air.toml`.
-- **Rust**: Add `cargo-watch` to your Dockerfile and use `CMD ["cargo", "watch", "-x", "run"]`
+- **Rust**: The template includes `cargo-watch` which watches `.rs` files and rebuilds automatically via `CMD ["cargo", "watch", "-x", "run"]`. The `cargo-target` named volume persists compiled artifacts between restarts, avoiding 5-30 minute full recompiles.
 
-Typical rebuild cycle: save file → ~1-2 seconds → new binary running.
+Typical rebuild cycle: save file -> ~1-2 seconds -> new binary running.
 
 ### Accessing the container shell
 
@@ -56,6 +56,7 @@ This drops you into a bash (or sh) shell inside the running container, with the 
 npm install some-package        # Node
 go get some/module              # Go
 composer require some/package   # PHP
+pip install some-package        # Python
 cargo add some-crate            # Rust
 ```
 
@@ -68,7 +69,7 @@ cargo add some-crate            # Rust
 # Just your app
 ./devstack.sh logs app
 
-# Just nginx (useful for debugging routing)
+# Just Caddy (useful for debugging routing)
 ./devstack.sh logs web
 
 # Just WireMock (useful for debugging mock responses)
@@ -203,7 +204,7 @@ const response = await fetch('https://api.stripe.com/v1/charges', {
 });
 ```
 
-In DevStack, this HTTPS request goes to nginx (via DNS alias) → WireMock → mock response.
+In DevStack, this HTTPS request goes to Caddy (via DNS alias) -> WireMock -> mock response.
 In production, it goes to the real Stripe API.
 
 No `if (isDev)` flags. No environment-switching logic.
@@ -247,7 +248,7 @@ wget -qO- http://localhost:8080/__admin/requests
 # Check what mappings are loaded
 wget -qO- http://localhost:8080/__admin/mappings
 
-# Check nginx is routing correctly
+# Check Caddy is routing correctly
 ./devstack.sh logs web
 
 # Test the mock directly from inside the app container
@@ -271,15 +272,71 @@ devstack/
 │   └── src/                # Your actual source code
 │       └── ...
 │
+├── frontend/               # Your frontend source (if FRONTEND_TYPE is set)
+│   ├── Dockerfile          # REQUIRED: how to build the frontend container
+│   ├── package.json        # Frontend dependencies
+│   └── src/                # Frontend source code
+│       └── ...
+│
 ├── mocks/                  # Your mock definitions
 │   └── ...
 │
 ├── tests/
-│   └── playwright/         # Your E2E test specs
-│       └── ...
+│   ├── playwright/         # E2E test specs
+│   │   └── ...
+│   └── contract/           # Contract validation test fixtures
+│       └── fixtures/       # JSON payloads for bootstrap testing
+│           └── ...
 │
 ├── project.env             # Your project configuration
 └── ...                     # DevStack internals (don't edit unless creating templates)
+```
+
+### DevStack internals file tree
+
+```
+devstack/
+├── core/
+│   ├── caddy/
+│   │   └── generate-caddyfile.sh    # Generates .generated/Caddyfile from mocks/*/domains + project.env
+│   ├── certs/
+│   │   └── generate.sh             # Generates TLS certs (CA + server) with SANs for mocked domains
+│   └── compose/
+│       └── generate.sh             # Assembles .generated/docker-compose.yml from templates
+│
+├── contract/
+│   └── manifest.json               # Catalog of all available items, presets, and wiring rules
+│
+├── templates/
+│   ├── apps/                        # App templates (one per language/framework)
+│   │   ├── node-express/
+│   │   ├── php-laravel/
+│   │   ├── go/
+│   │   ├── python-fastapi/
+│   │   └── rust/
+│   ├── databases/                   # Database templates
+│   │   ├── postgres/
+│   │   └── mariadb/
+│   ├── extras/                      # Extra service templates
+│   │   ├── redis/
+│   │   ├── mailpit/
+│   │   ├── nats/
+│   │   ├── minio/
+│   │   ├── prometheus/
+│   │   ├── grafana/
+│   │   ├── dozzle/
+│   │   ├── db-ui/
+│   │   └── swagger-ui/
+│   └── frontends/                   # Frontend dev server templates
+│       └── vite/
+│
+├── .generated/                      # AUTO-GENERATED (never edit)
+│   ├── docker-compose.yml
+│   ├── Caddyfile
+│   └── domains.txt
+│
+├── devstack.sh                      # CLI entrypoint
+└── project.env                      # Project configuration
 ```
 
 ### What you edit vs. what's generated
@@ -288,18 +345,72 @@ devstack/
 |-------------|----------------------|
 | `project.env` | `.generated/*` |
 | `app/*` | |
+| `frontend/*` | |
 | `mocks/*` | |
 | `tests/playwright/*` | |
 | `templates/*` (when creating templates) | |
+| `core/*` (when modifying generators) | |
+| `contract/manifest.json` (when adding items to catalog) | |
+
+## Architecture components
+
+### Caddy (reverse proxy)
+
+Caddy serves as the web server and reverse proxy (`web` container). It handles:
+
+- **App routing**: Proxies HTTP requests to `app:3000` (or FastCGI to `app:9000` for PHP).
+- **Frontend routing**: When a frontend is configured, routes `${FRONTEND_API_PREFIX}/*` to the backend and everything else to the frontend dev server.
+- **Mock interception**: Terminates TLS for mocked domains and proxies to WireMock, adding `X-Original-Host` headers.
+- **Test results**: Serves static HTML test reports at `/test-results/`.
+
+Config is generated by `core/caddy/generate-caddyfile.sh` and written to `.generated/Caddyfile`.
+
+### Wiring system
+
+The wiring system in `contract/manifest.json` auto-generates environment variables when certain items are selected together. For example, when both `app.*` and `services.redis` are selected, the system writes `REDIS_URL=redis://redis:6379` to project.env.
+
+Wiring rules:
+
+```json
+{
+  "when": ["app.*", "services.redis"],
+  "set": "app.*.redis_url",
+  "template": "redis://redis:6379"
+}
+```
+
+- `when`: Array of item selectors (wildcards OK). All must be present in selections.
+- `set`: The output variable path. Last segment becomes the env var name (uppercased).
+- `template`: The value to write. Can reference other item properties.
+
+See `contract/manifest.json` for all defined wiring rules.
+
+### Contract validation
+
+The `--bootstrap` flow validates payloads against the manifest before generating anything. Validation checks:
+
+- Required categories have selections
+- Single-select categories don't have multiple items
+- Referenced items exist in the manifest
+- Dependencies (`requires`) are satisfied (wildcard patterns like `app.*` match any app selection)
+- Conflicts are not violated
+- Port collisions between default ports are detected
+
+Test fixtures in `tests/contract/fixtures/` cover these scenarios:
+- `port-conflict-default.json` / `port-conflict-override.json` / `port-conflict-resolved.json` -- port collision detection and resolution
+- `valid-with-frontend.json` / `valid-with-frontend-full.json` -- frontend configuration
+- `valid-with-observability.json` -- observability stack
+- `conflict-payload.json` / `manifest-with-conflict.json` -- conflict detection
+- `missing-wildcard-dep.json` / `missing-wildcard-dep-fail.json` -- wildcard dependency resolution
 
 ## AI-assisted development
 
 DevStack is designed to work with AI coding agents (Claude Code, Cursor, Copilot, etc.):
 
-1. **The agent edits files on your machine** (in `app/src/`, `mocks/`, `tests/`)
+1. **The agent edits files on your machine** (in `app/src/`, `frontend/src/`, `mocks/`, `tests/`)
 2. **Changes appear in the container** instantly (volume mount)
 3. **The agent runs tests** via `./devstack.sh test`
-4. **Test results are structured** (JSON + HTML + screenshots) — the agent can parse failures
+4. **Test results are structured** (JSON + HTML + screenshots) -- the agent can parse failures
 5. **The agent can shell into containers** via `./devstack.sh shell` for debugging
 
 The key principle: the agent never needs to install anything on your machine. Everything runs in containers.

@@ -43,7 +43,7 @@ Usually means the `core/certs/generate.sh` script has an error, or the domains.t
 
 ### App gets "connection refused" or "ECONNREFUSED"
 
-The DNS alias isn't resolving to the nginx container. Check:
+The DNS alias isn't resolving to the Caddy container. Check:
 
 1. Is the domain listed in the correct `mocks/<name>/domains` file?
 2. Did you restart after adding the mock? (`./devstack.sh stop && ./devstack.sh start`)
@@ -144,7 +144,7 @@ Fix: add `X-Original-Host` header matching to the conflicting mappings:
 }
 ```
 
-Nginx automatically adds this header when proxying to WireMock.
+Caddy automatically adds this header when proxying to WireMock.
 
 ## Test failures
 
@@ -177,7 +177,7 @@ grep baseURL tests/playwright/playwright.config.ts
 # Should be: http://web or https://web:443
 ```
 
-The test container connects to the app via the Docker network using hostname `web` (the nginx container).
+The test container connects to the app via the Docker network using hostname `web` (the Caddy container).
 
 ### "Cannot find module" errors in tests
 
@@ -239,11 +239,11 @@ Check the error output. Common causes:
 - Database doesn't exist yet (check `DB_NAME` matches what's in the MariaDB/Postgres env)
 - Previous migration left a partial state (since we clean-slate on restart, this shouldn't happen)
 
-## nginx issues
+## Proxy issues
 
 ### 502 Bad Gateway
 
-Nginx can reach the network but the app container isn't responding on the expected port.
+Caddy can reach the network but the app container isn't responding on the expected port.
 
 ```bash
 # Check app is listening
@@ -251,17 +251,17 @@ Nginx can reach the network but the app container isn't responding on the expect
 # For Node: curl http://localhost:3000/
 # For PHP: check php-fpm is running
 
-# Check nginx config
-cat .generated/nginx.conf | grep proxy_pass
+# Check Caddy config
+grep reverse_proxy .generated/Caddyfile
 ```
 
-Fix: make sure your app listens on port 3000 (or 9000 for PHP-FPM), matching what's in the generated nginx config.
+Fix: make sure your app listens on port 3000 (or 9000 for PHP-FPM), matching what's in the generated Caddyfile.
 
 ### 403 Forbidden
 
-Nginx is trying to serve a directory listing (no index file). Usually means the `root` directive points to a directory without an index file.
+Caddy is trying to serve a directory listing (no index file). Usually means the `root` directive points to a directory without an index file.
 
-For non-PHP apps, this shouldn't happen (nginx proxies everything to the app). For PHP apps, check that `public/index.php` exists in your app source.
+For non-PHP apps, this shouldn't happen (Caddy proxies everything to the app). For PHP apps, check that `public/index.php` exists in your app source.
 
 ## General
 
@@ -309,7 +309,7 @@ docker run --rm -v $(pwd)/mocks/stripe:/data alpine rm -rf /data/recordings
 
 ### Recording doesn't capture anything
 
-The recorder container listens on its own hostname (`${PROJECT_NAME}-recorder:8080`), not on the mocked domain. You need to make requests directly to the recorder, not through nginx.
+The recorder container listens on its own hostname (`${PROJECT_NAME}-recorder:8080`), not on the mocked domain. You need to make requests directly to the recorder, not through Caddy.
 
 From another terminal while recording:
 

@@ -228,7 +228,7 @@ export default defineConfig({
 
 | Setting | What it controls | Default |
 |---------|-----------------|---------|
-| `baseURL` | Where `page.goto('/')` points | `http://web` (the nginx container) |
+| `baseURL` | Where `page.goto('/')` points | `http://web` (the Caddy container) |
 | `ignoreHTTPSErrors` | Accept self-signed certs | `true` |
 | `screenshot` | When to capture screenshots | `on` (every test) |
 | `workers` | Parallel test execution | `1` (sequential) |

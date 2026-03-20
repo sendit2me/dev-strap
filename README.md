@@ -18,9 +18,9 @@ DevStrap intercepts HTTPS at the network layer:
 
 ```
 Your app → HTTPS to api.stripe.com
-         → Docker DNS resolves to nginx (network alias)
-         → Nginx terminates TLS with auto-generated cert
-         → Nginx proxies to WireMock
+         → Docker DNS resolves to Caddy (network alias)
+         → Caddy terminates TLS with auto-generated cert
+         → Caddy proxies to WireMock
          → WireMock returns mock response
          → Your app gets a response as if Stripe replied
 ```
@@ -70,26 +70,31 @@ echo "api.twilio.com" > mocks/twilio/domains
 ./devstack.sh restart
 ```
 
-Certificates, nginx routing, and DNS aliases are auto-generated from the directory structure.
+Certificates, Caddy routing, and DNS aliases are auto-generated from the directory structure.
 
 ## Architecture
 
 ```
-┌─── Docker Network ────────────────────────────────────────┐
-│                                                           │
-│  [App] ──HTTPS──▶ [Nginx] ──proxy──▶ [WireMock]         │
-│    │              (DNS aliases:       (JSON stubs,        │
-│    │               api.stripe.com     stateful scenarios, │
-│    │               api.openai.com)    conditional logic)  │
-│    │                                                      │
-│    ├──▶ [DB] (MariaDB / Postgres)                        │
-│    ├──▶ [Redis]                                          │
-│    └──▶ [Mailpit]                                        │
-│                                                           │
-│  [Tester] ─── Playwright in container                    │
-│  [Dashboard] ─── Test reports at localhost:8082           │
-│  [Cert-gen] ─── Auto-generates CA + server certs         │
-└───────────────────────────────────────────────────────────┘
+┌─── Docker Network ───────────────────────────────────────────────┐
+│                                                                   │
+│  [App] ──HTTPS──▶ [Caddy] ──proxy──▶ [WireMock]                 │
+│    │              (DNS aliases:       (JSON stubs,                │
+│    │               api.stripe.com     stateful scenarios,         │
+│    │               api.openai.com)    conditional logic)          │
+│    │                                                              │
+│    ├──▶ [DB] (PostgreSQL / MariaDB)                              │
+│    ├──▶ [Redis]          ├──▶ [NATS]                             │
+│    ├──▶ [Mailpit]        └──▶ [MinIO]                            │
+│    │                                                              │
+│  [Frontend] ─── Vite dev server (HMR, API proxy via Caddy)       │
+│  [QA] ─── Playwright test runner in container                    │
+│  [QA Dashboard] ─── Test reports at localhost:8082               │
+│  [Adminer] ─── Database browser at localhost:8083                │
+│  [Swagger UI] ─── API docs at localhost:8084                     │
+│  [Prometheus + Grafana] ─── Metrics and dashboards               │
+│  [Dozzle] ─── Real-time container log viewer                     │
+│  [Cert-gen] ─── Auto-generates CA + server certs                │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ## What You Need
@@ -103,11 +108,17 @@ Everything is in `project.env`:
 
 ```env
 PROJECT_NAME=my-app
-APP_TYPE=node-express    # or php-laravel, go
+APP_TYPE=node-express    # or php-laravel, go, python-fastapi, rust
 APP_SOURCE=./app
-DB_TYPE=mariadb          # or postgres, none
+DB_TYPE=postgres         # or mariadb, none
 EXTRAS=redis,mailpit
 HTTP_PORT=8080
+```
+
+Or use a preset to get a curated stack in one step:
+
+```bash
+./devstack.sh init --preset full-stack
 ```
 
 ## Mock Patterns
@@ -118,15 +129,73 @@ DevStrap includes working examples of three WireMock patterns:
 - **Stateful** — responses change across sequential calls (pending → processing → complete)
 - **Conditional** — different responses based on request body (amount >= 10000 → requires_review)
 
-## App Templates
+## Catalog
+
+### App Templates
 
 | Template | Language | Live Reload | Port |
 |----------|----------|-------------|------|
 | `node-express` | Node.js 22 | `--watch` (built-in) | 3000 |
 | `php-laravel` | PHP 8.3 FPM | Automatic (FPM) | 9000 |
 | `go` | Go 1.24 | Air (file watcher) | 3000 |
+| `python-fastapi` | Python (FastAPI) | uvicorn hot reload | 3000 |
+| `rust` | Rust | cargo-watch | 3000 |
 
-All templates include `.devcontainer/` config for VS Code.
+### Frontend
+
+| Component | Description | Port |
+|-----------|-------------|------|
+| `vite` | Vite dev server with HMR, path-based API routing through Caddy | 5173 |
+
+### Databases
+
+| Component | Description | Port |
+|-----------|-------------|------|
+| `postgres` | PostgreSQL 16 | 5432 |
+| `mariadb` | MariaDB 10.11 | 3306 |
+
+### Services
+
+| Component | Description | Ports |
+|-----------|-------------|-------|
+| `redis` | Cache / queue / session store | 6379 |
+| `mailpit` | SMTP catcher with web UI | 1025 (SMTP), 8025 (UI) |
+| `nats` | Messaging with JetStream streaming | 4222 (client), 8222 (monitor) |
+| `minio` | S3-compatible object storage | 9000 (API), 9001 (console) |
+
+### Tooling
+
+| Component | Description | Port |
+|-----------|-------------|------|
+| `qa` | Playwright test runner (isolated container) | — |
+| `qa-dashboard` | Web UI for test results | 8082 |
+| `wiremock` | API mocking with hot-reload definitions | 8443 |
+| `devcontainer` | VS Code dev container config | — |
+| `db-ui` | Adminer database browser | 8083 |
+| `swagger-ui` | Live OpenAPI spec viewer | 8084 |
+
+### Observability
+
+| Component | Description | Port |
+|-----------|-------------|------|
+| `prometheus` | Metrics collection and time-series DB | 9090 |
+| `grafana` | Metrics dashboards and visualization | 3001 |
+| `dozzle` | Real-time Docker container log viewer | 9999 |
+
+### Preset Bundles
+
+Presets select a curated combination of components for common scenarios:
+
+| Preset | What you get |
+|--------|-------------|
+| `spa-api` | Vite frontend + API backend + PostgreSQL + QA + WireMock |
+| `api-only` | API backend + PostgreSQL + Redis + QA + Swagger UI |
+| `full-stack` | Vite + API + PostgreSQL + Redis + QA + Prometheus + Grafana + Dozzle |
+| `data-pipeline` | Python (FastAPI) + PostgreSQL + NATS + MinIO |
+
+### Auto-wiring
+
+Services auto-configure when co-selected. For example, selecting Redis alongside an app template automatically sets `REDIS_URL` in the app's environment. Similarly, NATS sets `NATS_URL`, MinIO sets `S3_ENDPOINT`, and Swagger UI points at the app's OpenAPI spec.
 
 ## Commands
 
@@ -158,7 +227,7 @@ All templates include `.devcontainer/` config for VS Code.
 | [ADDING_SERVICES](docs/ADDING_SERVICES.md) | Custom services with port forwarding |
 | [DEVELOPMENT](docs/DEVELOPMENT.md) | Dev workflow, devcontainers, database |
 | [TESTING](docs/TESTING.md) | Writing and running tests |
-| [CREATING_TEMPLATES](docs/CREATING_TEMPLATES.md) | New app templates (Rust, Python, etc.) |
+| [CREATING_TEMPLATES](docs/CREATING_TEMPLATES.md) | Adding new app templates |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | System design and internals |
 | [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | Common issues and fixes |
 

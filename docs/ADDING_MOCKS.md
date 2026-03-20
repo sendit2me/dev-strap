@@ -33,9 +33,9 @@ hooks.stripe.com
 ```
 
 These domains become:
-- DNS aliases on the nginx container (Docker resolves them to nginx)
+- DNS aliases on the Caddy container (Docker resolves them to Caddy)
 - SANs on the auto-generated SSL certificate
-- `server_name` entries in the nginx config (proxied to WireMock)
+- Site address entries in the Caddyfile (proxied to WireMock)
 
 ### `mappings/` directory
 
@@ -233,7 +233,7 @@ curl -k https://api.example-provider.com/v1/items
 
 All mocked domains share a single WireMock instance. If two APIs use the same path (e.g., both Stripe and OpenAI have `POST /v1/tokens`), WireMock needs to distinguish them.
 
-Nginx adds an `X-Original-Host` header with the original domain. Use `headerPatterns` in your mapping to match on it:
+Caddy adds an `X-Original-Host` header with the original domain. Use `headerPatterns` in your mapping to match on it:
 
 ```json
 {
@@ -283,7 +283,7 @@ To quickly create mock mappings from a real API:
 # 1. Create the mock directory
 ./devstack.sh new-mock stripe api.stripe.com
 
-# 2. Restart to register the new domain (certs, DNS, nginx)
+# 2. Restart to register the new domain (certs, DNS, Caddy)
 ./devstack.sh restart
 
 # 3. Start recording (proxies to the real API)
@@ -322,7 +322,7 @@ vim mocks/stripe/mappings/create-charge.json
 
 This calls WireMock's `/__admin/mappings/reset` endpoint, which re-reads all mapping files from disk. Changes take effect immediately.
 
-**When you DO need a full restart:** Adding a new domain (new `mocks/<name>/domains` file) requires regenerating nginx config and certificates, which requires `./devstack.sh restart`.
+**When you DO need a full restart:** Adding a new domain (new `mocks/<name>/domains` file) requires regenerating the Caddyfile and certificates, which requires `./devstack.sh restart`.
 
 ## Debugging Mock Responses
 
