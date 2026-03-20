@@ -1190,6 +1190,111 @@ validate_bootstrap_payload() {
     '
 }
 
+# Resolve wiring rules from the manifest against the bootstrap payload.
+# Outputs a JSON object of { "category.item.key": "resolved_value", ... }
+# User overrides always take precedence (wiring is skipped if the target
+# already has a non-empty override).
+resolve_wiring() {
+    local payload="$1"
+    local manifest_file="$2"
+
+    jq -n --argjson p "${payload}" --slurpfile m "${manifest_file}" '
+        $m[0] as $manifest |
+        $p.selections as $sel |
+
+        # Helper: collect selected items per category as {cat: [item_keys]}
+        ($sel | to_entries | map({key: .key, value: (.value // {} | keys)})
+            | from_entries) as $selected |
+
+        # Helper: build resolved defaults (manifest defaults merged with overrides)
+        # for each selected item → { "cat.item": { merged_defaults } }
+        reduce ($sel | to_entries[] |
+            .key as $cat |
+            (.value // {}) | to_entries[] |
+            .key as $item | .value as $s |
+            {
+                key: "\($cat).\($item)",
+                value: (($manifest.categories[$cat].items[$item].defaults // {})
+                        * ($s.overrides // {}))
+            }
+        ) as $entry ({}; . + {($entry.key): $entry.value}) as $resolved |
+
+        # Process each wiring rule
+        reduce ($manifest.wiring // [] | .[]) as $rule ({};
+            # Check if all "when" conditions are satisfied
+            ([$rule.when[] |
+                if endswith(".*") then
+                    # Wildcard: any item in that category is selected
+                    (split(".")[0]) as $cat |
+                    (($selected[$cat] // []) | length) > 0
+                else
+                    # Exact match: category.item must be selected
+                    (split(".") | .[0]) as $cat |
+                    (split(".") | .[1]) as $item |
+                    (($selected[$cat] // []) | index($item) != null)
+                end
+            ] | all) as $match |
+
+            if $match then
+                # Parse the "set" target: "category.item.key"
+                ($rule.set | split(".")) as $parts |
+                ($parts[0]) as $tgt_cat |
+                ($parts[1]) as $tgt_item_raw |
+
+                # Resolve wildcard in the set target
+                (if $tgt_item_raw == "*" then
+                    (($selected[$tgt_cat] // []) | sort | .[0] // null)
+                else $tgt_item_raw end) as $tgt_item |
+
+                ($parts[2]) as $tgt_key |
+
+                if $tgt_item == null then . else
+                    # Check if user already set a non-empty override for this key
+                    (($sel[$tgt_cat][$tgt_item].overrides // {})[$tgt_key] // null) as $user_val |
+
+                    if $user_val != null and ($user_val | tostring) != "" then
+                        # User override takes precedence — skip this rule
+                        .
+                    else
+                        # Resolve the template string
+                        # Resolve each {category.*} and {category.*.key} placeholder
+                        # Use split/join instead of gsub to avoid regex interpretation
+                        ($rule.template | reduce (
+                            # Find all template placeholders
+                            [scan("\\{[^}]+\\}")] | unique | .[]
+                        ) as $placeholder (
+                            .;
+                            # Strip braces
+                            ($placeholder | ltrimstr("{") | rtrimstr("}")) as $ref |
+                            ($ref | split(".")) as $ref_parts |
+                            ($ref_parts[0]) as $ref_cat |
+                            ($ref_parts[1]) as $ref_item_raw |
+
+                            # Resolve wildcard item reference
+                            (if $ref_item_raw == "*" then
+                                (($selected[$ref_cat] // []) | sort | .[0] // "")
+                            else $ref_item_raw end) as $ref_item |
+
+                            if ($ref_parts | length) == 2 then
+                                # {category.*} or {category.item} → the item key itself
+                                split($placeholder) | join($ref_item)
+                            elif ($ref_parts | length) == 3 then
+                                # {category.*.key} → the resolved default value for that key
+                                ($ref_parts[2]) as $ref_key |
+                                ($resolved["\($ref_cat).\($ref_item)"][$ref_key]
+                                    // "" | tostring) as $val |
+                                split($placeholder) | join($val)
+                            else . end
+                        )) as $resolved_value |
+
+                        . + {("\($tgt_cat).\($tgt_item).\($tgt_key)"): $resolved_value}
+                    end
+                end
+            else . end
+        )
+    '
+}
+
 # Generate project files from a validated bootstrap payload.
 # All output goes to stderr; stdout is reserved for the JSON response.
 generate_from_bootstrap() {
@@ -1286,6 +1391,34 @@ DB_ROOT_PASSWORD=root
 EXTRAS=${extras}
 ENV
 
+    # ── 1b. Resolve wiring rules and append to project.env ────────────────
+    local wiring_json
+    wiring_json=$(resolve_wiring "${payload}" "${manifest_file}")
+
+    if [ -n "${wiring_json}" ] && [ "${wiring_json}" != "{}" ]; then
+        log "Resolving auto-wiring rules..." >&2
+
+        # Convert wiring JSON to env var lines and append to project.env
+        # Key format: "frontend.vite.proxy_target" → "VITE_PROXY_TARGET"
+        # Key format: "app.go.redis_url" → "REDIS_URL"
+        # We extract the last segment, uppercase it, and write as env var
+        local wiring_envs
+        wiring_envs=$(printf '%s\n' "${wiring_json}" | jq -r '
+            to_entries[] |
+            (.key | split(".") | last | ascii_upcase) as $var |
+            "\($var)=\(.value)"
+        ')
+
+        if [ -n "${wiring_envs}" ]; then
+            {
+                echo ""
+                echo "# Auto-wiring (resolved from manifest rules)"
+                printf '%s\n' "${wiring_envs}"
+            } >> "${DEVSTACK_DIR}/project.env"
+            log "  Wrote wiring env vars to project.env" >&2
+        fi
+    fi
+
     # ── 2. Scaffold app directory ──────────────────────────────────────────
     log "Scaffolding app directory..." >&2
     mkdir -p "${DEVSTACK_DIR}/app"
@@ -1370,12 +1503,20 @@ TEST_CFG
     return 0
 }
 
-# Build the JSON success response: resolved services + commands
+# Build the JSON success response: resolved services + commands + wiring
 build_bootstrap_response() {
     local payload="$1"
     local manifest_file="$2"
 
-    jq -n --argjson p "${payload}" --slurpfile m "${manifest_file}" '
+    # Resolve wiring to include in the response
+    local wiring_json
+    wiring_json=$(resolve_wiring "${payload}" "${manifest_file}")
+    if [ -z "${wiring_json}" ]; then
+        wiring_json='{}'
+    fi
+
+    jq -n --argjson p "${payload}" --slurpfile m "${manifest_file}" \
+           --argjson wiring "${wiring_json}" '
         $m[0] as $manifest |
 
         # Resolved services: manifest defaults merged with user overrides
@@ -1406,7 +1547,7 @@ build_bootstrap_response() {
                 test: "./devstack.sh test",
                 logs: "./devstack.sh logs"
             }
-        }
+        } + (if ($wiring | length) > 0 then {wiring: $wiring} else {} end)
     '
 }
 

@@ -1,6 +1,49 @@
 {
   "contract": "devstrap-options",
   "version": "1",
+  "presets": {
+    "spa-api": {
+      "label": "SPA + API",
+      "description": "Frontend SPA with API backend, database, testing, and mocking",
+      "selections": {
+        "frontend": ["vite"],
+        "database": ["postgres"],
+        "tooling": ["qa", "wiremock"]
+      },
+      "prompts": ["app"]
+    },
+    "api-only": {
+      "label": "API Service",
+      "description": "Backend API with database, caching, testing, and API docs",
+      "selections": {
+        "database": ["postgres"],
+        "services": ["redis"],
+        "tooling": ["qa", "swagger-ui"]
+      },
+      "prompts": ["app"]
+    },
+    "full-stack": {
+      "label": "Full Stack + Observability",
+      "description": "Complete development environment with frontend, backend, database, and monitoring",
+      "selections": {
+        "frontend": ["vite"],
+        "database": ["postgres"],
+        "services": ["redis"],
+        "tooling": ["qa"],
+        "observability": ["prometheus", "grafana", "dozzle"]
+      },
+      "prompts": ["app"]
+    },
+    "data-pipeline": {
+      "label": "Data Pipeline",
+      "description": "Python-based data processing with messaging and object storage",
+      "selections": {
+        "app": ["python-fastapi"],
+        "database": ["postgres"],
+        "services": ["nats", "minio"]
+      }
+    }
+  },
   "categories": {
     "app": {
       "label": "Application",
@@ -159,5 +202,37 @@
         }
       }
     }
-  }
+  },
+  "wiring": [
+    {
+      "when": ["frontend.vite", "app.*"],
+      "set": "frontend.vite.proxy_target",
+      "template": "http://{app.*}:{app.*.port}"
+    },
+    {
+      "when": ["app.*", "services.redis"],
+      "set": "app.*.redis_url",
+      "template": "redis://redis:6379"
+    },
+    {
+      "when": ["app.*", "services.nats"],
+      "set": "app.*.nats_url",
+      "template": "nats://nats:4222"
+    },
+    {
+      "when": ["app.*", "services.minio"],
+      "set": "app.*.s3_endpoint",
+      "template": "http://minio:9000"
+    },
+    {
+      "when": ["tooling.db-ui", "database.*"],
+      "set": "tooling.db-ui.default_server",
+      "template": "db"
+    },
+    {
+      "when": ["tooling.swagger-ui", "app.*"],
+      "set": "tooling.swagger-ui.spec_url",
+      "template": "http://app:{app.*.port}/docs/openapi.json"
+    }
+  ]
 }

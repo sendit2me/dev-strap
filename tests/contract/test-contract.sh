@@ -199,6 +199,22 @@ assert_json "has minio" "${options_output}" '.categories.services.items.minio'
 assert_json "has db-ui" "${options_output}" '.categories.tooling.items["db-ui"]'
 assert_json "has swagger-ui" "${options_output}" '.categories.tooling.items["swagger-ui"]'
 
+# Presets
+assert_json "has presets"           "${options_output}" '.presets'
+assert_json "has spa-api preset"    "${options_output}" '.presets["spa-api"]'
+assert_json "has api-only preset"   "${options_output}" '.presets["api-only"]'
+assert_json "has full-stack preset" "${options_output}" '.presets["full-stack"]'
+assert_json "has data-pipeline preset" "${options_output}" '.presets["data-pipeline"]'
+assert_json_eq "spa-api has prompts" "${options_output}" '.presets["spa-api"].prompts | length' "1"
+assert_json_eq "spa-api prompts app" "${options_output}" '.presets["spa-api"].prompts[0]' "app"
+assert_json_eq "data-pipeline has no prompts" "${options_output}" '.presets["data-pipeline"].prompts // [] | length' "0"
+assert_json_eq "preset count is 4"  "${options_output}" '.presets | keys | length' "4"
+
+# Wiring rules
+assert_json "has wiring"          "${options_output}" '.wiring'
+assert_json_eq "wiring rule count" "${options_output}" '.wiring | length' "6"
+assert_json_eq "first wiring targets vite proxy" "${options_output}" '.wiring[0].set' "frontend.vite.proxy_target"
+
 # ══════════════════════════════════════════════════════════════════════════
 # --bootstrap validation tests
 # ══════════════════════════════════════════════════════════════════════════
