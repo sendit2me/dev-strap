@@ -1,0 +1,117 @@
+{
+  "contract": "devstrap-options",
+  "version": "1",
+  "categories": {
+    "app": {
+      "label": "Application",
+      "description": "Development application template",
+      "selection": "multi",
+      "required": true,
+      "items": {
+        "node-express": {
+          "label": "Node.js (Express)",
+          "description": "Express API with hot reload",
+          "defaults": { "port": 3000 }
+        },
+        "php-laravel": {
+          "label": "PHP (Laravel)",
+          "description": "Laravel with PHP-FPM",
+          "defaults": { "port": 9000 }
+        },
+        "go": {
+          "label": "Go",
+          "description": "Go module with Air live reload",
+          "defaults": { "port": 3000 }
+        }
+      }
+    },
+    "database": {
+      "label": "Database",
+      "description": "Primary data store",
+      "selection": "single",
+      "required": false,
+      "items": {
+        "postgres": {
+          "label": "PostgreSQL 16",
+          "description": "Relational database with Alpine image",
+          "defaults": { "port": 5432 }
+        },
+        "mariadb": {
+          "label": "MariaDB 10.11",
+          "description": "MySQL-compatible database",
+          "defaults": { "port": 3306 }
+        }
+      }
+    },
+    "services": {
+      "label": "Additional Services",
+      "description": "Supporting infrastructure for development",
+      "selection": "multi",
+      "required": false,
+      "items": {
+        "redis": {
+          "label": "Redis",
+          "description": "Cache / queue / session store",
+          "defaults": { "port": 6379 },
+          "requires": ["app.*"]
+        },
+        "mailpit": {
+          "label": "Mailpit",
+          "description": "SMTP catcher with web UI",
+          "defaults": { "smtp_port": 1025, "ui_port": 8025 }
+        }
+      }
+    },
+    "tooling": {
+      "label": "Development Tooling",
+      "description": "Testing and development infrastructure",
+      "selection": "multi",
+      "required": false,
+      "items": {
+        "qa": {
+          "label": "QA Container",
+          "description": "Isolated test runner with Playwright, curl, jq — no source mounted"
+        },
+        "qa-dashboard": {
+          "label": "QA Dashboard",
+          "description": "Web UI for test results and reports",
+          "defaults": { "port": 8082 },
+          "requires": ["tooling.qa"]
+        },
+        "wiremock": {
+          "label": "API Mocking",
+          "description": "WireMock with hot-reload mock definitions",
+          "defaults": { "port": 8443 }
+        },
+        "devcontainer": {
+          "label": "VS Code Dev Container",
+          "description": "Generates per-app devcontainer.json for VS Code Remote Containers"
+        }
+      }
+    },
+    "observability": {
+      "label": "Observability",
+      "description": "Monitoring, metrics, and log viewing",
+      "selection": "multi",
+      "required": false,
+      "items": {
+        "prometheus": {
+          "label": "Prometheus",
+          "description": "Metrics collection and time-series database",
+          "defaults": { "port": 9090 }
+        },
+        "grafana": {
+          "label": "Grafana",
+          "description": "Metrics dashboards and visualization",
+          "defaults": { "port": 3001 },
+          "requires": ["observability.prometheus"]
+        },
+        "dozzle": {
+          "label": "Dozzle",
+          "description": "Real-time Docker container log viewer",
+          "defaults": { "port": 9999 }
+        }
+      }
+    }
+  }
+}

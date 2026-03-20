@@ -1,0 +1,14 @@
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: ${PROJECT_NAME}-dozzle
+    ports:
+      - "${DOZZLE_PORT}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ${PROJECT_NAME}-internal
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

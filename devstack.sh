@@ -918,9 +918,489 @@ TEST_CFG
 }
 
 # ---------------------------------------------------------------------------
+# Contract Interface — PowerHouse integration (--options, --bootstrap)
+# See: DEVSTRAP-POWERHOUSE-CONTRACT.md
+# ---------------------------------------------------------------------------
+
+require_jq() {
+    if ! command -v jq &>/dev/null; then
+        cat <<'EOF'
+{"contract":"devstrap-result","version":"1","status":"error","errors":[{"code":"MISSING_JQ","message":"jq is required for contract operations. Install: https://jqlang.github.io/jq/download/"}]}
+EOF
+        exit 1
+    fi
+}
+
+# DISCOVER: Output the options manifest as JSON to stdout
+cmd_contract_options() {
+    local manifest="${DEVSTACK_DIR}/contract/manifest.json"
+    if [ ! -f "${manifest}" ]; then
+        cat <<'EOF'
+{"contract":"devstrap-result","version":"1","status":"error","errors":[{"code":"INTERNAL_ERROR","message":"Manifest file not found at contract/manifest.json"}]}
+EOF
+        exit 1
+    fi
+    if ! jq '.' "${manifest}" 2>/dev/null; then
+        cat <<'EOF'
+{"contract":"devstrap-result","version":"1","status":"error","errors":[{"code":"INTERNAL_ERROR","message":"Manifest file contains invalid JSON"}]}
+EOF
+        exit 1
+    fi
+}
+
+# BOOTSTRAP: Parse args, read payload, validate, generate, respond
+cmd_contract_bootstrap() {
+    local config_path=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --config)
+                if [[ $# -lt 2 ]]; then
+                    jq -n '{contract:"devstrap-result",version:"1",status:"error",
+                            errors:[{code:"INVALID_ARGS",message:"--config requires a path or - for stdin"}]}'
+                    exit 1
+                fi
+                config_path="$2"
+                shift 2
+                ;;
+            *)
+                jq -n --arg f "$1" \
+                    '{contract:"devstrap-result",version:"1",status:"error",
+                      errors:[{code:"INVALID_ARGS",message:"Unknown flag: \($f). Usage: devstack.sh --bootstrap --config <path|->"}]}'
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ -z "${config_path}" ]; then
+        jq -n '{contract:"devstrap-result",version:"1",status:"error",
+                errors:[{code:"INVALID_ARGS",message:"--config is required. Usage: devstack.sh --bootstrap --config <path|->"}]}'
+        exit 1
+    fi
+
+    # Read payload from file or stdin
+    local payload
+    if [ "${config_path}" = "-" ]; then
+        if [ -t 0 ]; then
+            jq -n '{contract:"devstrap-result",version:"1",status:"error",
+                    errors:[{code:"INVALID_ARGS",message:"--config - requires piped input, but stdin is a terminal"}]}'
+            exit 1
+        fi
+        payload=$(cat)
+    else
+        if [ ! -f "${config_path}" ]; then
+            jq -n --arg p "${config_path}" \
+                '{contract:"devstrap-result",version:"1",status:"error",
+                  errors:[{code:"INVALID_ARGS",message:"Config file not found: \($p)"}]}'
+            exit 1
+        fi
+        payload=$(cat "${config_path}")
+    fi
+
+    # Validate JSON syntax (printf avoids echo interpreting flags like -n/-e)
+    if ! printf '%s\n' "${payload}" | jq '.' &>/dev/null; then
+        jq -n '{contract:"devstrap-result",version:"1",status:"error",
+                errors:[{code:"INVALID_JSON",message:"Config file is not valid JSON"}]}'
+        exit 1
+    fi
+
+    # Load manifest
+    local manifest="${DEVSTACK_DIR}/contract/manifest.json"
+    if [ ! -f "${manifest}" ]; then
+        jq -n '{contract:"devstrap-result",version:"1",status:"error",
+                errors:[{code:"INTERNAL_ERROR",message:"Manifest file not found"}]}'
+        exit 1
+    fi
+
+    # Validate payload against manifest
+    local errors
+    errors=$(validate_bootstrap_payload "${payload}" "${manifest}") || {
+        jq -n '{contract:"devstrap-result",version:"1",status:"error",
+                errors:[{code:"INTERNAL_ERROR",message:"Validation failed unexpectedly"}]}'
+        exit 1
+    }
+
+    if [ "$(printf '%s\n' "${errors}" | jq 'length')" -gt 0 ]; then
+        jq -n --argjson errors "${errors}" \
+            '{contract:"devstrap-result",version:"1",status:"error",errors:$errors}'
+        exit 1
+    fi
+
+    # Validation passed — Docker required for generation
+    check_docker
+
+    # Generate environment (all log output to stderr, stdout reserved for JSON)
+    if ! generate_from_bootstrap "${payload}" "${manifest}"; then
+        jq -n '{contract:"devstrap-result",version:"1",status:"error",
+                errors:[{code:"GENERATION_FAILED",message:"Environment generation failed — check stderr for details"}]}'
+        exit 1
+    fi
+
+    # Output success response
+    build_bootstrap_response "${payload}" "${manifest}"
+}
+
+# Validate bootstrap payload against manifest. Outputs JSON array of error objects.
+# All ten contract-specified checks are performed; ALL errors are collected.
+validate_bootstrap_payload() {
+    local payload="$1"
+    local manifest_file="$2"
+
+    jq -n --argjson p "${payload}" --slurpfile m "${manifest_file}" '
+        $m[0] as $manifest |
+        [] |
+
+        # 1. contract field
+        if ($p.contract // "") != "devstrap-bootstrap" then
+            . + [{code:"INVALID_CONTRACT",
+                  message:"Expected contract \"devstrap-bootstrap\", got \"\($p.contract // "null")\""}]
+        else . end |
+
+        # 2. version field
+        if ($p.version // "") != "1" then
+            . + [{code:"INVALID_VERSION",
+                  message:"Expected version \"1\", got \"\($p.version // "null")\""}]
+        else . end |
+
+        # 3. project name
+        if ($p.project // "" | test("^[a-z][a-z0-9-]*$") | not) then
+            . + [{code:"INVALID_PROJECT_NAME",
+                  message:"Invalid project name \"\($p.project // "")\". Must match [a-z][a-z0-9-]*"}]
+        else . end |
+
+        # 4. unknown categories
+        reduce (($p.selections // {}) | keys[]) as $cat (.;
+            if ($manifest.categories | has($cat) | not) then
+                . + [{code:"UNKNOWN_CATEGORY",
+                      message:"Unknown category \"\($cat)\""}]
+            else . end
+        ) |
+
+        # 5. unknown items (only within known categories; // {} guards null values)
+        reduce (($p.selections // {}) | to_entries[]) as $e (.;
+            if ($manifest.categories | has($e.key)) then
+                reduce (($e.value // {}) | keys[]) as $item (.;
+                    if ($manifest.categories[$e.key].items | has($item) | not) then
+                        . + [{code:"UNKNOWN_ITEM",
+                              message:"Unknown item \"\($item)\" in category \"\($e.key)\""}]
+                    else . end
+                )
+            else . end
+        ) |
+
+        # 6. required categories must have at least one selection
+        reduce ($manifest.categories | to_entries[]) as $cat (.;
+            if $cat.value.required and
+               ((($p.selections // {})[$cat.key] // {}) | keys | length) == 0
+            then
+                . + [{code:"MISSING_REQUIRED",
+                      message:"Category \"\($cat.key)\" requires at least one selection"}]
+            else . end
+        ) |
+
+        # 7. single-selection categories must have at most one item
+        reduce ($manifest.categories | to_entries[]) as $cat (.;
+            if $cat.value.selection == "single" and
+               ((($p.selections // {})[$cat.key] // {}) | keys | length) > 1
+            then
+                . + [{code:"INVALID_SINGLE_SELECT",
+                      message:"Category \"\($cat.key)\" allows only one selection, got \((($p.selections // {})[$cat.key] // {}) | keys | length)"}]
+            else . end
+        ) |
+
+        # 8. requires dependencies
+        # Build flat list of all selected "category.item" references
+        (($p.selections // {}) | to_entries | map(
+            .key as $cat | (.value // {}) | keys | map("\($cat).\(.)")
+        ) | flatten) as $selected |
+
+        reduce (($p.selections // {}) | to_entries[]) as $ce (.;
+            if ($manifest.categories | has($ce.key)) then
+                reduce (($ce.value // {}) | keys[]) as $item (.;
+                    if ($manifest.categories[$ce.key].items | has($item)) then
+                        reduce (($manifest.categories[$ce.key].items[$item].requires // [])[]) as $dep (.;
+                            if ($dep | endswith(".*")) then
+                                # Wildcard: any item in the dependency category
+                                ($dep | split(".")[0]) as $dep_cat |
+                                if ((($p.selections // {})[$dep_cat] // {}) | keys | length) == 0 then
+                                    . + [{code:"MISSING_DEPENDENCY",
+                                          message:"Item \"\($ce.key).\($item)\" requires at least one item from category \"\($dep_cat)\""}]
+                                else . end
+                            else
+                                # Specific item
+                                if ($selected | index($dep)) == null then
+                                    . + [{code:"MISSING_DEPENDENCY",
+                                          message:"Item \"\($ce.key).\($item)\" requires \"\($dep)\""}]
+                                else . end
+                            end
+                        )
+                    else . end
+                )
+            else . end
+        ) |
+
+        # 9. conflicts
+        reduce (($p.selections // {}) | to_entries[]) as $ce (.;
+            if ($manifest.categories | has($ce.key)) then
+                reduce (($ce.value // {}) | keys[]) as $item (.;
+                    if ($manifest.categories[$ce.key].items | has($item)) then
+                        reduce (($manifest.categories[$ce.key].items[$item].conflicts // [])[]) as $conflict (.;
+                            ($conflict | split(".")) as $parts |
+                            if ((($p.selections // {})[$parts[0]] // {}) | has($parts[1])) then
+                                . + [{code:"CONFLICT",
+                                      message:"Items \"\($ce.key).\($item)\" and \"\($conflict)\" conflict"}]
+                            else . end
+                        )
+                    else . end
+                )
+            else . end
+        ) |
+
+        # 10. override keys must exist in item defaults
+        reduce (($p.selections // {}) | to_entries[]) as $ce (.;
+            if ($manifest.categories | has($ce.key)) then
+                reduce (($ce.value // {}) | to_entries[]) as $ie (.;
+                    if ($manifest.categories[$ce.key].items | has($ie.key)) then
+                        reduce (($ie.value.overrides // {}) | keys[]) as $key (.;
+                            if (($manifest.categories[$ce.key].items[$ie.key].defaults // {}) | has($key) | not) then
+                                . + [{code:"INVALID_OVERRIDE",
+                                      message:"Override key \"\($key)\" does not exist in defaults for \"\($ce.key).\($ie.key)\""}]
+                            else . end
+                        )
+                    else . end
+                )
+            else . end
+        )
+    '
+}
+
+# Generate project files from a validated bootstrap payload.
+# All output goes to stderr; stdout is reserved for the JSON response.
+generate_from_bootstrap() {
+    local payload="$1"
+    local manifest_file="$2"
+
+    # ── Extract settings from payload ──────────────────────────────────────
+    # (printf avoids echo interpreting flags like -n/-e in edge cases)
+    local project_name app_type db_type extras
+    project_name=$(printf '%s\n' "${payload}" | jq -r '.project')
+    app_type=$(printf '%s\n' "${payload}" | jq -r '.selections.app | keys[0]')
+    db_type=$(printf '%s\n' "${payload}" | jq -r '.selections.database // {} | keys[0] // "none"')
+    # Merge services + observability into EXTRAS (both use templates/extras/)
+    extras=$(printf '%s\n' "${payload}" | jq -r '
+        [(.selections.services // {} | keys[]),
+         (.selections.observability // {} | keys[])] | join(",")')
+
+    # Derive database port
+    local db_port=3306
+    case "${db_type}" in
+        postgres) db_port=5432 ;;
+        mariadb)  db_port=3306 ;;
+    esac
+
+    # ── Resolve host ports (manifest defaults + overrides) ─────────────────
+    local http_port=8080
+    local https_port=8443
+    local test_dashboard_port=8082
+    local mailpit_port=8025
+    local prometheus_port=9090
+    local grafana_port=3001
+    local dozzle_port=9999
+
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.wiremock.overrides.port' &>/dev/null; then
+        https_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling.wiremock.overrides.port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling["qa-dashboard"].overrides.port' &>/dev/null; then
+        test_dashboard_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling["qa-dashboard"].overrides.port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.services.mailpit.overrides.ui_port' &>/dev/null; then
+        mailpit_port=$(printf '%s\n' "${payload}" | jq -r '.selections.services.mailpit.overrides.ui_port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.observability.prometheus.overrides.port' &>/dev/null; then
+        prometheus_port=$(printf '%s\n' "${payload}" | jq -r '.selections.observability.prometheus.overrides.port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.observability.grafana.overrides.port' &>/dev/null; then
+        grafana_port=$(printf '%s\n' "${payload}" | jq -r '.selections.observability.grafana.overrides.port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.observability.dozzle.overrides.port' &>/dev/null; then
+        dozzle_port=$(printf '%s\n' "${payload}" | jq -r '.selections.observability.dozzle.overrides.port')
+    fi
+
+    # ── 1. Write project.env ───────────────────────────────────────────────
+    log "Writing project.env..." >&2
+    cat > "${DEVSTACK_DIR}/project.env" <<ENV
+# =============================================================================
+# DevStack Project Configuration
+# Generated by: ./devstack.sh --bootstrap
+# =============================================================================
+
+PROJECT_NAME=${project_name}
+NETWORK_SUBNET=172.28.0.0/24
+
+APP_TYPE=${app_type}
+APP_SOURCE=./app
+APP_INIT_SCRIPT=./app/init.sh
+
+HTTP_PORT=${http_port}
+HTTPS_PORT=${https_port}
+TEST_DASHBOARD_PORT=${test_dashboard_port}
+MAILPIT_PORT=${mailpit_port}
+PROMETHEUS_PORT=${prometheus_port}
+GRAFANA_PORT=${grafana_port}
+DOZZLE_PORT=${dozzle_port}
+
+DB_TYPE=${db_type}
+DB_NAME=${project_name}
+DB_USER=${project_name}
+DB_PASSWORD=secret
+DB_ROOT_PASSWORD=root
+
+EXTRAS=${extras}
+ENV
+
+    # ── 2. Scaffold app directory ──────────────────────────────────────────
+    log "Scaffolding app directory..." >&2
+    mkdir -p "${DEVSTACK_DIR}/app"
+
+    if [ -f "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" ]; then
+        cp "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" \
+           "${DEVSTACK_DIR}/app/Dockerfile"
+    fi
+
+    if [ ! -f "${DEVSTACK_DIR}/app/init.sh" ]; then
+        cat > "${DEVSTACK_DIR}/app/init.sh" <<'INIT_SH'
+#!/bin/sh
+echo "[init] App initialization starting..."
+# Add your setup steps here (install deps, run migrations, seed data)
+echo "[init] Done."
+INIT_SH
+        chmod +x "${DEVSTACK_DIR}/app/init.sh"
+    fi
+
+    # ── 3. Mocks directory (if wiremock selected) ──────────────────────────
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.wiremock' &>/dev/null; then
+        log "Creating mocks directory..." >&2
+        mkdir -p "${DEVSTACK_DIR}/mocks"
+    fi
+
+    # ── 4. Devcontainer (if selected) ─────────────────────────────────────
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.devcontainer' &>/dev/null; then
+        local devcontainer_src="${DEVSTACK_DIR}/templates/apps/${app_type}/.devcontainer"
+        if [ -d "${devcontainer_src}" ]; then
+            log "Copying devcontainer configuration..." >&2
+            mkdir -p "${DEVSTACK_DIR}/.devcontainer"
+            cp -r "${devcontainer_src}/." "${DEVSTACK_DIR}/.devcontainer/"
+        fi
+    fi
+
+    # ── 5. Test infrastructure (if qa selected) ───────────────────────────
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.qa' &>/dev/null; then
+        log "Setting up test infrastructure..." >&2
+        mkdir -p "${DEVSTACK_DIR}/tests/playwright"
+        mkdir -p "${DEVSTACK_DIR}/tests/results"
+
+        if [ ! -f "${DEVSTACK_DIR}/tests/playwright/playwright.config.ts" ]; then
+            cat > "${DEVSTACK_DIR}/tests/playwright/package.json" <<'TEST_PKG'
+{
+  "name": "devstack-tests",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@playwright/test": "1.52.0"
+  }
+}
+TEST_PKG
+            cat > "${DEVSTACK_DIR}/tests/playwright/playwright.config.ts" <<'TEST_CFG'
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+    testDir: '.',
+    testMatch: '**/*.spec.ts',
+    timeout: 30000,
+    retries: 0,
+    workers: 1,
+    use: {
+        baseURL: process.env.BASE_URL || 'http://web',
+        ignoreHTTPSErrors: true,
+        screenshot: 'on',
+    },
+    reporter: [
+        ['html', { outputFolder: process.env.PLAYWRIGHT_HTML_REPORT || '/results/report', open: 'never' }],
+        ['json', { outputFile: process.env.PLAYWRIGHT_JSON_OUTPUT_FILE || '/results/results.json' }],
+        ['list'],
+    ],
+    outputDir: '/results/artifacts',
+});
+TEST_CFG
+        fi
+    fi
+
+    # ── 6. Run existing generators ────────────────────────────────────────
+    log "Running generators..." >&2
+    cmd_generate >&2 || return 1
+
+    log_ok "Environment generated successfully." >&2
+    return 0
+}
+
+# Build the JSON success response: resolved services + commands
+build_bootstrap_response() {
+    local payload="$1"
+    local manifest_file="$2"
+
+    jq -n --argjson p "${payload}" --slurpfile m "${manifest_file}" '
+        $m[0] as $manifest |
+
+        # Resolved services: manifest defaults merged with user overrides
+        ($p.selections | to_entries | map(
+            .key as $cat |
+            (.value // {}) | to_entries | map(
+                .key as $item |
+                .value as $sel |
+                {
+                    key: $item,
+                    value: (
+                        ($manifest.categories[$cat].items[$item].defaults // {}) *
+                        ($sel.overrides // {})
+                    )
+                }
+            )
+        ) | flatten | from_entries) as $services |
+
+        {
+            contract: "devstrap-result",
+            version: "1",
+            status: "ok",
+            project_dir: ("./\($p.project)"),
+            services: $services,
+            commands: {
+                start: "./devstack.sh start",
+                stop: "./devstack.sh stop",
+                test: "./devstack.sh test",
+                logs: "./devstack.sh logs"
+            }
+        }
+    '
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
+    # Handle contract flags first — these do not require project.env
+    case "${1:-}" in
+        --options)
+            require_jq
+            cmd_contract_options
+            exit $?
+            ;;
+        --bootstrap)
+            require_jq
+            shift
+            cmd_contract_bootstrap "$@"
+            exit $?
+            ;;
+    esac
+
     check_docker
     load_config
 
@@ -972,6 +1452,10 @@ main() {
             echo "  init                        Interactive project setup (scaffolds project.env, app/, etc.)"
             echo "  generate                    Regenerate config files without starting"
             echo "  help                        Show this help"
+            echo ""
+            echo "Contract (PowerHouse integration):"
+            echo "  --options                   Output available options as JSON manifest"
+            echo "  --bootstrap --config <path> Generate environment from JSON selections (- for stdin)"
             echo ""
             echo "Configuration: project.env"
             echo "Mock services:  mocks/<name>/domains + mocks/<name>/mappings/*.json"

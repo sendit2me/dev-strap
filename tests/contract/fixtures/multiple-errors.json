@@ -1,0 +1,10 @@
+{
+  "contract": "devstrap-bootstrap",
+  "version": "1",
+  "project": "BAD NAME",
+  "selections": {
+    "cloud": {
+      "aws": {}
+    }
+  }
+}
