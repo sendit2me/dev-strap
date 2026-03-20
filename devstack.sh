@@ -66,16 +66,16 @@ cmd_generate() {
 
     mkdir -p "${GENERATED_DIR}"
 
-    # 1. Generate nginx.conf
-    log "Generating nginx.conf..."
-    bash "${DEVSTACK_DIR}/core/nginx/generate-conf.sh"
+    # 1. Generate Caddyfile
+    log "Generating Caddyfile..."
+    bash "${DEVSTACK_DIR}/core/caddy/generate-caddyfile.sh"
 
     # 2. Generate docker-compose.yml
     log "Generating docker-compose.yml..."
     bash "${DEVSTACK_DIR}/core/compose/generate.sh"
 
     log_ok "Configuration generated in ${GENERATED_DIR}/"
-    log "  - nginx.conf"
+    log "  - Caddyfile"
     log "  - docker-compose.yml"
     log "  - domains.txt"
 }
@@ -767,7 +767,7 @@ cmd_verify_mocks() {
         log_ok "All ${pass} mocked domain(s) verified."
     else
         log_err "${fail} domain(s) failed. ${pass} passed."
-        log "Check: ./devstack.sh logs web (nginx routing)"
+        log "Check: ./devstack.sh logs web (proxy routing)"
         log "Check: ./devstack.sh status (container health)"
         return 1
     fi

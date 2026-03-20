@@ -412,7 +412,7 @@ else
     # Generated files
     assert_eq "project.env created"         "true" "$([ -f "${DEVSTACK_DIR}/project.env" ] && echo true || echo false)"
     assert_eq "docker-compose.yml created"  "true" "$([ -f "${DEVSTACK_DIR}/.generated/docker-compose.yml" ] && echo true || echo false)"
-    assert_eq "nginx.conf created"          "true" "$([ -f "${DEVSTACK_DIR}/.generated/nginx.conf" ] && echo true || echo false)"
+    assert_eq "Caddyfile created"            "true" "$([ -f "${DEVSTACK_DIR}/.generated/Caddyfile" ] && echo true || echo false)"
     assert_eq "app/Dockerfile created"      "true" "$([ -f "${DEVSTACK_DIR}/app/Dockerfile" ] && echo true || echo false)"
     assert_eq "app/init.sh created"         "true" "$([ -f "${DEVSTACK_DIR}/app/init.sh" ] && echo true || echo false)"
     assert_eq "mocks/ created (wiremock)"   "true" "$([ -d "${DEVSTACK_DIR}/mocks" ] && echo true || echo false)"

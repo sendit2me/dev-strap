@@ -5,7 +5,7 @@
 # Generates a complete PKI chain for HTTPS mock interception:
 #   1. Root CA (trusted by the app container)
 #   2. Server certificate with SANs for all mocked domains
-#   3. JKS keystore for WireMock
+#   (JKS removed — WireMock runs HTTP-only behind the proxy)
 #
 # This script runs inside the cert-gen container. It reads domain names
 # from /config/domains.txt (one per line), which is assembled by devstack.sh
@@ -120,30 +120,10 @@ openssl x509 -req \
     -extfile "${CERT_DIR}/openssl.cnf"
 
 # ---------------------------------------------------------------------------
-# 3. JKS Keystore for WireMock
-# ---------------------------------------------------------------------------
-echo "[cert-gen] Generating JKS keystore for WireMock..."
-openssl pkcs12 -export \
-    -in "${CERT_DIR}/server.crt" \
-    -inkey "${CERT_DIR}/server.key" \
-    -out "${CERT_DIR}/server.p12" \
-    -name wiremock \
-    -passout pass:password
-
-keytool -importkeystore \
-    -srckeystore "${CERT_DIR}/server.p12" \
-    -srcstoretype PKCS12 \
-    -srcstorepass password \
-    -destkeystore "${CERT_DIR}/wiremock.jks" \
-    -deststoretype JKS \
-    -deststorepass password \
-    -noprompt 2>/dev/null
-
-# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "[cert-gen] Certificate generation complete."
 echo "[cert-gen] Files:"
-ls -la "${CERT_DIR}"/*.crt "${CERT_DIR}"/*.key "${CERT_DIR}"/*.jks 2>/dev/null
+ls -la "${CERT_DIR}"/*.crt "${CERT_DIR}"/*.key 2>/dev/null
 echo "[cert-gen] SANs included:"
 openssl x509 -in "${CERT_DIR}/server.crt" -noout -ext subjectAltName 2>/dev/null || true

@@ -215,7 +215,7 @@ services:
   # Certificate Generator — runs once, creates certs volume
   # ---------------------------------------------------------------------------
   cert-gen:
-    image: eclipse-temurin:17-alpine
+    image: alpine:3
     container_name: ${PROJECT_NAME}-cert-gen
     volumes:
       - ${PROJECT_NAME}-certs:/certs
@@ -223,7 +223,7 @@ services:
       - ${OUTPUT_DIR}/domains.txt:/config/domains.txt:ro
     environment:
       - PROJECT_NAME=${PROJECT_NAME}
-    entrypoint: ["sh", "/scripts/generate.sh"]
+    entrypoint: ["sh", "-c", "apk add --no-cache openssl >/dev/null 2>&1 && sh /scripts/generate.sh"]
     networks:
       - ${PROJECT_NAME}-internal
 
@@ -233,18 +233,18 @@ services:
 ${APP_SERVICE}
 
   # ---------------------------------------------------------------------------
-  # Web Server (Nginx) — reverse proxy + mock API interceptor
+  # Web Server (Caddy) — reverse proxy + mock API interceptor
   # ---------------------------------------------------------------------------
   web:
-    image: nginx:alpine
+    image: caddy:2-alpine
     container_name: ${PROJECT_NAME}-web
     ports:
       - "${HTTP_PORT}:80"
       - "${HTTPS_PORT}:443"
     volumes:
-      - ${OUTPUT_DIR}/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ${PROJECT_NAME}-certs:/etc/nginx/certs:ro
-      - ${DEVSTACK_DIR}/tests/results:/var/www/html/public/test-results:ro
+      - ${OUTPUT_DIR}/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${PROJECT_NAME}-certs:/certs:ro
+      - ${DEVSTACK_DIR}/tests/results:/srv/test-results:ro
 COMPOSE_HEAD
 
 # Add app source volume mount for web if PHP (serves static files)
@@ -395,6 +395,6 @@ volumes:
 COMPOSE_FOOTER
 
 echo "[compose-gen] Generated ${OUTPUT_FILE}"
-echo "[compose-gen] Services: cert-gen, app, web, wiremock, tester, test-dashboard"
+echo "[compose-gen] Services: cert-gen, app, web (caddy), wiremock, tester, test-dashboard"
 [ -n "${DB_SERVICE}" ] && echo "[compose-gen] Database: ${DB_TYPE}"
 [ -n "${EXTRAS_SERVICES}" ] && echo "[compose-gen] Extras: ${EXTRAS}"

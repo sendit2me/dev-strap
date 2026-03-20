@@ -12,7 +12,7 @@ It is NOT:
 - A Docker image
 
 It IS:
-- A set of bash scripts that generate `docker-compose.yml`, `nginx.conf`, and TLS certificates from a directory structure
+- A set of bash scripts that generate `docker-compose.yml`, `Caddyfile`, and TLS certificates from a directory structure
 - Templates for different app types (Node, PHP, Go)
 - WireMock JSON stubs for mocking external APIs
 - A CLI (`devstack.sh`) that orchestrates everything
@@ -23,7 +23,7 @@ It IS:
 SOURCE (edit these)                    GENERATED (never edit these)
 ─────────────────                      ──────────────────────────
 project.env                            .generated/docker-compose.yml
-mocks/*/domains                        .generated/nginx.conf
+mocks/*/domains                        .generated/Caddyfile
 mocks/*/mappings/*.json                .generated/domains.txt
 mocks/*/__files/*
 templates/apps/*/service.yml
@@ -31,7 +31,7 @@ templates/apps/*/Dockerfile
 templates/databases/*/service.yml
 templates/extras/*/service.yml
 core/certs/generate.sh
-core/nginx/generate-conf.sh
+core/caddy/generate-caddyfile.sh
 core/compose/generate.sh
 devstack.sh
 app/                                   tests/results/
@@ -47,7 +47,7 @@ When starting work, read these files in this order:
 1. **`project.env`** — current configuration (app type, database, ports, extras)
 2. **`devstack.sh`** — the CLI, all commands, the orchestration flow
 3. **`core/compose/generate.sh`** — how docker-compose.yml is assembled
-4. **`core/nginx/generate-conf.sh`** — how nginx.conf is assembled
+4. **`core/caddy/generate-caddyfile.sh`** — how Caddyfile is assembled
 5. **`core/certs/generate.sh`** — how certificates are generated
 6. **`templates/apps/{APP_TYPE}/service.yml`** — the active app template (check APP_TYPE in project.env)
 
@@ -65,7 +65,7 @@ You edit a file
        │     └── ./devstack.sh reload-mocks  (hot reload, no restart)
        │
        ├── mocks/*/domains (new domain)
-       │     └── ./devstack.sh restart  (needs new certs + nginx config)
+       │     └── ./devstack.sh restart  (needs new certs + Caddy config)
        │
        ├── app/src/* (application code)
        │     └── Nothing — file watcher in container picks it up
@@ -100,7 +100,7 @@ After ANY code change, this is the verification loop:
 ./devstack.sh mocks           # list what's configured
 
 # Debug:
-./devstack.sh logs web        # nginx routing issues
+./devstack.sh logs web        # proxy routing issues
 ./devstack.sh logs wiremock   # mock matching issues
 ./devstack.sh logs app        # application errors
 ./devstack.sh shell app       # interactive debugging
@@ -112,10 +112,10 @@ Tests must pass. If they don't, the change is broken. Don't skip this.
 
 ```
 App makes HTTPS request to api.stripe.com
-  → Docker DNS resolves api.stripe.com to nginx (network alias in docker-compose)
-  → Nginx terminates TLS (cert has SAN for api.stripe.com)
-  → Nginx proxies to WireMock (http://wiremock:8080)
-  → Nginx adds X-Original-Host: api.stripe.com header
+  → Docker DNS resolves api.stripe.com to Caddy (network alias in docker-compose)
+  → Caddy terminates TLS (cert has SAN for api.stripe.com)
+  → Caddy adds X-Original-Host: api.stripe.com header
+  → Caddy proxies to WireMock (http://wiremock:8080)
   → WireMock matches against mocks/stripe/mappings/*.json
   → Returns stub response
   → App receives it as if Stripe replied
@@ -127,7 +127,7 @@ The app code is identical in dev and production. No `isDev` flags anywhere.
 
 ```
 mocks/*/domains  ──→  .generated/domains.txt  ──→  cert-gen container (SANs)
-                 ──→  nginx server_name blocks
+                 ──→  Caddy site blocks
                  ──→  docker-compose network aliases
 
 project.env      ──→  selects templates/apps/{APP_TYPE}/
@@ -183,11 +183,11 @@ All `mocks/*/mappings/` directories are mounted into a single WireMock. If two A
 ```json
 "headers": { "X-Original-Host": { "equalTo": "api.stripe.com" } }
 ```
-Nginx adds `X-Original-Host` automatically. Only needed when paths collide across different mocked services.
+Caddy adds `X-Original-Host` automatically. Only needed when paths collide across different mocked services.
 
 ### 7. New domains require restart, mapping changes don't
 - Changed a JSON mapping → `./devstack.sh reload-mocks`
-- Added a new `mocks/<name>/domains` file → `./devstack.sh restart` (needs new cert SANs + nginx config + DNS alias)
+- Added a new `mocks/<name>/domains` file → `./devstack.sh restart` (needs new cert SANs + Caddy config + DNS alias)
 
 ### 8. The init script runs via stdin pipe
 `devstack.sh` pipes the init script into the container: `exec -T app sh < init.sh`. This means:
