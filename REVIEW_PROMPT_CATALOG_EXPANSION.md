@@ -1,151 +1,156 @@
-# Review Prompt: dev-strap Catalog Expansion
+# Review Prompt: dev-strap System Review
 
-> **For**: A review team to analyse the end product of the catalog expansion initiative.
-> **Context**: This review covers 6 phases of work implementing a major expansion to dev-strap's catalog, proxy layer, and developer experience.
+> **For**: A review team to analyse the complete system as it stands today.
+> **Context**: dev-strap is a meta-tool (factory) that generates self-contained Docker development environments (products). This review covers the factory, the product, and everything in between.
 
 ---
 
 ## Instructions for Reviewers
 
-You are reviewing a significant expansion to dev-strap — a meta-tool that generates Docker infrastructure for development environments. The work spans new services, languages, a proxy swap, frontend support, preset bundles, and auto-wiring.
+You are reviewing dev-strap — a tool that generates Docker infrastructure for development environments. The system has two parts:
 
-Read the files in the order below. For each section, assess the quality of implementation against the criteria listed.
+1. **The Factory** (this repo) — presents a catalog of services, takes selections, and assembles a self-contained project
+2. **The Product** (what users get) — a project directory with Docker Compose `include`-based services, a lightweight CLI, and mock management
+
+Read the files in the order below. For each section, assess the quality against the criteria listed.
 
 ---
 
-## 1. Understand the Starting Point
+## 1. Understand the Architecture
 
-Read these first to understand what existed before the expansion:
+Read these to understand how the system is structured:
 
+- `docs/ARCHITECTURE-NEXT.md` — Factory/product separation, design principles
 - `docs/AI_BOOTSTRAP.md` — System architecture, file reading order, pitfalls
-- `DEVSTRAP-POWERHOUSE-CONTRACT.md` — The contract interface with PowerHouse (orchestrator)
+- `DEVSTRAP-POWERHOUSE-CONTRACT.md` — Contract interface with PowerHouse (orchestrator)
 
 **Assessment criteria:**
-- Is the architecture clearly documented?
+- Is the factory/product boundary clearly defined?
 - Is the contract specification complete and unambiguous?
+- Does the documentation accurately describe the current system?
 
 ---
 
-## 2. Review the Research
+## 2. Review the Factory
 
-The expansion was driven by field feedback and researched before implementation. Evaluate the research quality:
-
-- `docs/dev-strap-catalog-proposals.md` — Original user proposals
-- `docs/research/IMPLEMENTATION-PLAN.md` — Master plan with decision log
-- `docs/research/01-new-services.md` — NATS, MinIO, Adminer, Swagger UI evaluation
-- `docs/research/02-language-templates.md` — Python/FastAPI, Rust template design
-- `docs/research/03-vite-multiapp-architecture.md` — Multi-app architecture options
-- `docs/research/04-contract-evolution.md` — Contract changes, presets, auto-wiring
-- `docs/research/05-stack-combinations.md` — Stack patterns, wiring maps, resource estimates
-- `docs/research/06-dbeaver-cloudbeaver.md` — DBeaver evaluation (decided against)
-- `docs/research/07-traefik-v3-evaluation.md` — Traefik v3 evaluation (rejected)
-- `docs/research/08-caddy-deep-dive.md` — Caddy v2 capabilities research
-- `docs/research/09-caddy-generator-design.md` — Caddy generator design
-- `docs/research/10-integrated-caddy-vite-design.md` — Integrated Caddy + Vite design
-
-**Assessment criteria:**
-- Were alternatives properly evaluated before decisions were made?
-- Are decision rationales clearly documented?
-- Is the research actionable (did it lead to implementation, not just theory)?
-- Were risks identified and mitigated?
-
----
-
-## 3. Review the Contract (Manifest)
-
-The contract is the interface between dev-strap and PowerHouse. Review it for completeness and consistency:
-
-- `contract/manifest.json` — The full catalog definition
-
-**Assessment criteria:**
-- Are all categories, items, defaults, requires, and conflicts internally consistent?
-- Do preset selections reference valid items?
-- Do preset dependencies satisfy requires constraints (e.g., grafana needs prometheus)?
-- Are wiring rules well-formed? Do `when` conditions reference valid categories?
-- Is the port allocation collision-free in default configuration?
-- Is backward compatibility maintained (version stays "1")?
-
----
-
-## 4. Review the Generators
-
-These are the core of dev-strap — they produce the infrastructure:
-
-- `core/caddy/generate-caddyfile.sh` — Caddyfile generator (replaced nginx)
-- `core/compose/generate.sh` — Docker Compose generator
-- `core/certs/generate.sh` — Certificate generator
-
-**Assessment criteria:**
-- Does the Caddyfile generator handle all app types correctly? (HTTP proxy, PHP FastCGI, frontend routing)
-- Is the mock interception flow preserved? (DNS alias → TLS termination → X-Original-Host → WireMock)
-- Is the compose generator backward compatible? (existing projects without FRONTEND_TYPE work)
-- Is the cert-gen script clean after JKS removal?
-- Are variable substitutions complete? (no unreplaced `${VAR}` in output)
-- Is the frontend section properly guarded? (only generated when FRONTEND_TYPE is set)
-
----
-
-## 5. Review the Templates
-
-Templates define individual services. Check consistency and quality:
-
-**App templates** (backends):
-- `templates/apps/node-express/` — Existing
-- `templates/apps/go/` — Existing
-- `templates/apps/php-laravel/` — Existing
-- `templates/apps/python-fastapi/` — NEW: Dockerfile + service.yml
-- `templates/apps/rust/` — NEW: Dockerfile + service.yml
-
-**Frontend templates:**
-- `templates/frontends/vite/` — NEW: Dockerfile + service.yml
-
-**Service templates** (extras):
-- `templates/extras/nats/` — NEW: service.yml + volumes.yml
-- `templates/extras/minio/` — NEW: service.yml + volumes.yml
-- `templates/extras/db-ui/` — NEW: service.yml
-- `templates/extras/swagger-ui/` — NEW: service.yml
-
-**Assessment criteria:**
-- Do new templates follow the same patterns as existing ones? (indentation, variable usage, service naming)
-- Are Dockerfiles well-structured? (layer caching, minimal images, appropriate base images)
-- Are CA certificate handling patterns correct per language?
-- Are named volumes properly prefixed with `${PROJECT_NAME}`?
-- Do service.yml files use correct `depends_on` conditions?
-- Is the frontend template's service named `frontend` (not `app`)?
-- Do volume sidecar files (volumes.yml) have correct indentation?
-
----
-
-## 6. Review the Bootstrap Pipeline
-
-The bootstrap flow: PowerHouse sends selections → dev-strap validates → generates project:
+The factory presents options and assembles projects.
 
 - `devstack.sh` — Focus on:
+  - `cmd_init()` — Interactive project scaffolding with `--preset` support
+  - `cmd_contract_options()` / `cmd_contract_bootstrap()` — JSON contract interface
   - `validate_bootstrap_payload()` — 11 validation checks including port collision
   - `resolve_wiring()` — Auto-wiring resolution
-  - `generate_from_bootstrap()` — Project generation including frontend extraction
-  - `build_bootstrap_response()` — Response with wiring results
+  - `generate_from_bootstrap()` — Product assembly (file copying, not generation)
+  - `build_bootstrap_response()` — Response with resolved services and wiring
+- `contract/manifest.json` — The full catalog (categories, items, presets, wiring rules)
 
 **Assessment criteria:**
-- Does port collision detection catch all cases? (defaults, overrides, multi-port items)
-- Does wiring resolution handle wildcards correctly? (`app.*` matches any app item)
-- Do user overrides take precedence over wiring?
-- Is frontend extraction correct? (FRONTEND_TYPE, FRONTEND_SOURCE, FRONTEND_PORT in project.env)
-- Is the frontend directory scaffolded properly? (Dockerfile copied, package.json created)
-- Does the bootstrap response include resolved wiring?
+- Does `cmd_init` read available types from the filesystem (not hardcoded)?
+- Does `cmd_init --preset` work correctly?
+- Does `generate_from_bootstrap` produce a self-contained product directory?
+- Are all categories, items, defaults, requires, and conflicts internally consistent?
+- Do preset selections reference valid items and satisfy dependency constraints?
+- Are wiring rules well-formed?
+- Is the port allocation collision-free in default configuration?
+- Is backward compatibility maintained (contract version stays "1")?
+
+---
+
+## 3. Review the Product
+
+The product is what ships to the user's project directory.
+
+- `product/devstack.sh` — Lightweight runtime CLI (~580 lines)
+- `product/certs/generate.sh` — Certificate generation with domain change detection
+- `product/.gitignore` — What's tracked vs generated
+
+**Assessment criteria:**
+- Is the product truly self-contained? (no references back to the factory)
+- Does `start` correctly generate only the dynamic files? (caddy.yml, wiremock.yml, Caddyfile, domains.txt)
+- Is `stop` non-destructive by default? Does `stop --clean` work?
+- Does `validate_config` catch the right things?
+- Are mock management commands complete? (new-mock, reload, record, apply-recording, verify)
+
+---
+
+## 4. Review the Templates
+
+Templates define individual services. The factory copies them to the product.
+
+**App templates** (5 backends):
+- `templates/apps/node-express/`, `templates/apps/go/`, `templates/apps/php-laravel/`
+- `templates/apps/python-fastapi/`, `templates/apps/rust/`
+
+**Frontend templates:**
+- `templates/frontends/vite/`
+
+**Database templates:**
+- `templates/databases/postgres/`, `templates/databases/mariadb/`
+
+**Service/tooling templates:**
+- `templates/extras/redis/`, `templates/extras/nats/`, `templates/extras/minio/`, `templates/extras/mailpit/`
+- `templates/extras/db-ui/`, `templates/extras/swagger-ui/`
+- `templates/extras/prometheus/`, `templates/extras/grafana/`, `templates/extras/dozzle/`
+
+**Common templates** (ship with every project):
+- `templates/common/cert-gen.yml`, `templates/common/tester.yml`, `templates/common/test-dashboard.yml`
+
+**Assessment criteria:**
+- Does every service.yml have a `services:` top-level key? (required for compose include)
+- Do all templates use literal volume/network names (e.g., `devstack-certs` not `${PROJECT_NAME}-certs`)?
+- Do services that use named volumes declare them in their own `volumes:` section?
+- Do all app templates have healthchecks?
+- Are Dockerfiles well-structured? (layer caching, minimal images, correct base images)
+- Are CA certificate handling patterns correct per language?
+- Is the frontend template's service named `frontend` (not `app`)?
+
+---
+
+## 5. Review the Proxy Layer
+
+- `core/caddy/generate-caddyfile.sh` — Caddyfile generator (used by both factory example and product)
+
+**Assessment criteria:**
+- Does it handle all three app routing modes? (PHP FastCGI, frontend+backend path-based, plain reverse proxy)
+- Is the mock interception flow correct? (DNS alias → TLS termination → X-Original-Host → WireMock)
+- Does `handle` (not `handle_path`) preserve the API prefix for backend routes?
+- Is `auto_https off` set globally?
+- Does `tls` correctly reference the cert paths?
+
+---
+
+## 6. Review the Compose Integration
+
+Bootstrap a project and examine the output:
+
+```bash
+echo '{"contract":"devstrap-bootstrap","version":"1","project":"review-test","selections":{"app":{"go":{}},"frontend":{"vite":{}},"database":{"postgres":{}},"services":{"redis":{},"nats":{}},"tooling":{"wiremock":{}}}}' | ./devstack.sh --bootstrap --config -
+```
+
+Then examine `review-test/`:
+
+**Assessment criteria:**
+- Does `docker-compose.yml` use `include:` with `project_directory: .`?
+- Does `ls services/` match the selections?
+- Does `.env` symlink to `project.env`?
+- Does `project.env` have `COMPOSE_PROJECT_NAME`?
+- Does `docker compose config` validate without errors (after generating dynamic files)?
+- Do `${VAR}` references in service files resolve from the root `.env`?
+- Do cross-file `depends_on` references work?
+- Do network aliases for mock domains appear on the caddy service?
 
 ---
 
 ## 7. Review the Tests
 
-- `tests/contract/test-contract.sh` — 184 test assertions
+- `tests/contract/test-contract.sh` — Contract test suite
 - `tests/contract/fixtures/` — Test payloads
 
 **Assessment criteria:**
-- Is there test coverage for every new feature? (port collision, presets, wiring, frontend)
-- Do test fixtures cover edge cases? (override-resolved conflicts, frontend-only, multi-service combos)
-- Are error codes tested? (PORT_CONFLICT, MISSING_DEPENDENCY, etc.)
-- Do generation tests verify the actual output? (Caddyfile content, compose content, project.env)
+- Do all tests pass? (`bash tests/contract/test-contract.sh`)
+- Is there coverage for: port collision, presets, wiring, frontend, product directory structure?
+- Do generation tests verify the assembled product (not just exit codes)?
+- Are edge cases covered? (empty selections, conflicting items, override validation)
 
 ---
 
@@ -154,17 +159,18 @@ The bootstrap flow: PowerHouse sends selections → dev-strap validates → gene
 - `README.md` — Project overview
 - `docs/QUICKSTART.md` — Getting started
 - `docs/ARCHITECTURE.md` — System architecture
+- `docs/ARCHITECTURE-NEXT.md` — Factory/product design principles
 - `docs/ADDING_SERVICES.md` — How to add new services
 - `docs/CREATING_TEMPLATES.md` — How to create app/frontend templates
 - `docs/DEVELOPMENT.md` — Developer guide
-- `DEVSTRAP-POWERHOUSE-CONTRACT.md` — Contract specification with changelog
+- `DEVSTRAP-POWERHOUSE-CONTRACT.md` — Contract specification
 
 **Assessment criteria:**
-- Is the catalog accurately represented? (all 5 backends, frontend, 4 services, 6 tooling, 3 observability)
+- Does the documentation accurately describe the factory/product architecture?
 - Are contributor guides actionable? (can someone follow them to add a new service?)
-- Are architectural decisions documented with rationale?
 - Are all nginx references updated to Caddy?
-- Is the contract changelog complete and accurate?
+- Does the catalog in README match what's in manifest.json?
+- Is the contract changelog complete?
 
 ---
 
@@ -172,7 +178,7 @@ The bootstrap flow: PowerHouse sends selections → dev-strap validates → gene
 
 After reviewing all sections, provide:
 
-1. **Architecture quality** — Is the system well-structured? Are concerns properly separated?
+1. **Architecture quality** — Is the factory/product separation clean? Are concerns properly divided?
 2. **Implementation quality** — Is the code clean, consistent, and maintainable?
 3. **Test coverage** — Are the tests sufficient? What's missing?
 4. **Documentation quality** — Can a new developer understand and extend the system?
@@ -182,11 +188,10 @@ After reviewing all sections, provide:
 
 ---
 
-## Quick Reference: What Changed
+## Quick Reference
 
-| Commit | Phase | Summary |
-|--------|-------|---------|
-| `4643faa` | 1-3 | Foundation (port collision, volumes), services (NATS, MinIO, Adminer, Swagger UI), languages (Python, Rust) |
-| `9ea545a` | 4 | Preset bundles (4), auto-wiring rules (6), resolve_wiring() |
-| `0c4efc4` | 5a | nginx → Caddy v2, cert-gen slimming |
-| `d4dd7bc` | 5b | Vite frontend, path-based routing, frontend scaffolding |
+**Factory** (this repo): `devstack.sh` + `contract/manifest.json` + `templates/` + `product/`
+
+**Product** (user's project): `devstack.sh` (lightweight) + `docker-compose.yml` (includes) + `services/` + `mocks/` + `app/` + `project.env`
+
+**Catalog**: 5 backends, 1 frontend, 2 databases, 4 services, 6 tooling, 3 observability, 4 presets, 6 wiring rules

@@ -27,21 +27,34 @@ You are reviewing a development environment bootstrapping tool. I need you to:
 
 #### 1. Understand it (by reading code, not docs about code)
 
-Start with `devstack.sh` and the `core/` directory. Read the generator scripts. Read the templates. Read the mock mapping files. Read the example app. Figure out:
+Start with `devstack.sh` and explore from there. Read the generator scripts, templates, contract manifest, product runtime, mock mapping files, and example app. Figure out:
 
 - What does this system actually do?
-- How does the HTTPS interception work end-to-end?
-- What generates what? What's source-of-truth vs derived?
+- How does the HTTPS mock interception work end-to-end?
+- What's source-of-truth vs derived? What generates what?
+- What's the relationship between the repo and a bootstrapped project?
 - What's the developer workflow?
 
 Don't read all the docs/ files first — read code, form your own understanding, then check docs to see if they match.
 
 #### 2. Run it
 
+Try the two main workflows:
+
+**Workflow A: Bootstrap a new project**
+```bash
+./devstack.sh init
+# Follow the prompts, then cd into the created project
+cd <your-project>/
+./devstack.sh start
+```
+
+**Workflow B: Use the example project in the repo**
 ```bash
 ./devstack.sh start
 ```
 
+For whichever you get running:
 - Hit every endpoint the example app exposes
 - Run the tests: `./devstack.sh test`
 - Try every CLI command: `status`, `mocks`, `shell`, `logs`, `help`
@@ -54,12 +67,15 @@ Don't read all the docs/ files first — read code, form your own understanding,
 
 - What happens if you add a mock with an empty domains file?
 - What happens if two mocks define the same URL path?
-- What happens if you edit a file in `.generated/` and restart?
 - What happens if you run `docker compose stop` instead of `./devstack.sh stop`?
 - What happens if port 8080 is already in use?
 - Try the `record` command — does the full record → apply-recording → playback flow work?
-- Try `init` — does it scaffold a working project?
+- Try `init` with `--preset` — does it scaffold a working project?
+- Try `init` without preset — does it list all available app types?
 - Try `verify-mocks` — is the output useful?
+- Try `stop` vs `stop --clean` — is the difference clear?
+- Bootstrap a project with frontend (`vite`) — does it produce a working compose file?
+- Bootstrap a project with multiple services — does `ls services/` match what you selected?
 
 #### 4. Report
 
@@ -110,22 +126,24 @@ You are reviewing a development environment bootstrapping tool. The AI_BOOTSTRAP
 
 For each section of AI_BOOTSTRAP.md, verify it against the actual code:
 
-- **Source-of-truth vs generated table** — Is every file listed correctly? Are any missing?
+- **Source-of-truth vs generated table** — Is every file listed correctly? Are any missing? Does the table reflect the actual project structure?
 - **File reading order** — Did reading files in that order give you a complete picture? What was missing?
-- **How changes flow** — Test each path. Edit a mapping and reload. Edit a template and restart. Edit app code and verify live reload. Are the documented commands correct?
+- **How changes flow** — Test each path. Edit a mapping and reload. Edit app code and verify live reload. Are the documented commands correct?
 - **Architecture in 30 seconds** — Is this accurate? Trace a real request through the system to verify.
-- **Variable substitution table** — Check every variable is actually substituted in `core/compose/generate.sh`. Are any variables missing from the table?
-- **Pitfalls** — For each of the 10 pitfalls: can you reproduce the problem it warns about? Is the warning accurate? Are there pitfalls it missed?
+- **Variable substitution table** — Check every variable against the actual code. Are any variables missing from the table?
+- **Pitfalls** — For each pitfall: can you reproduce the problem it warns about? Is the warning accurate? Are there pitfalls it missed?
 
 #### 2. Run the full validation suite
 
 ```bash
-./devstack.sh start          # start the stack
-# Hit every endpoint
-./devstack.sh test           # run tests
-./devstack.sh verify-mocks   # check mock routing
-./devstack.sh mocks          # list mocks
-./devstack.sh reload-mocks   # test hot reload
+# Bootstrap a project
+./devstack.sh init
+cd <your-project>/
+./devstack.sh start
+./devstack.sh test
+./devstack.sh verify-mocks
+./devstack.sh mocks
+./devstack.sh reload-mocks
 ```
 
 Then:
