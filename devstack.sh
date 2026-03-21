@@ -1645,12 +1645,16 @@ generate_from_bootstrap() {
             cp "${DEVSTACK_DIR}/templates/extras/${extra}/service.yml" "${dest}/services/${extra}.yml"
             log "  Copied service: ${extra}" >&2
         fi
-        # Copy extra support files (e.g., grafana provisioning, prometheus config)
+        # Copy extra config files to product config/ directory
         if [ -d "${DEVSTACK_DIR}/templates/extras/${extra}/provisioning" ]; then
-            cp -r "${DEVSTACK_DIR}/templates/extras/${extra}/provisioning" "${dest}/services/${extra}-provisioning"
+            mkdir -p "${dest}/config/${extra}"
+            cp -r "${DEVSTACK_DIR}/templates/extras/${extra}/provisioning" "${dest}/config/${extra}/provisioning"
+            log "  Copied config: ${extra}/provisioning" >&2
         fi
         if [ -f "${DEVSTACK_DIR}/templates/extras/${extra}/prometheus.yml" ]; then
-            cp "${DEVSTACK_DIR}/templates/extras/${extra}/prometheus.yml" "${dest}/services/prometheus.yml"
+            mkdir -p "${dest}/config"
+            cp "${DEVSTACK_DIR}/templates/extras/${extra}/prometheus.yml" "${dest}/config/prometheus.yml"
+            log "  Copied config: prometheus.yml" >&2
         fi
     done
 
@@ -1665,6 +1669,7 @@ NETWORK_SUBNET=172.28.0.0/24
 # Application
 APP_TYPE=${app_type}
 APP_SOURCE=./app
+APP_INIT_SCRIPT=./app/init.sh
 FRONTEND_SOURCE=./frontend
 
 # Ports
@@ -1806,10 +1811,12 @@ DBENV
 "
     done
 
-    # Wiremock (generated at runtime by product devstack.sh)
-    includes="${includes}  - path: services/wiremock.yml
+    # Wiremock (generated at runtime by product devstack.sh — only if wiremock selected)
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.wiremock' &>/dev/null; then
+        includes="${includes}  - path: services/wiremock.yml
     project_directory: .
 "
+    fi
 
     # Always present: tester
     includes="${includes}  - path: services/tester.yml

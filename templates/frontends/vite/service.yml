@@ -4,6 +4,7 @@ services:
       context: ${FRONTEND_SOURCE}
       dockerfile: Dockerfile
     container_name: ${PROJECT_NAME}-frontend
+    env_file: project.env
     volumes:
       - ${FRONTEND_SOURCE}:/app
       - /app/node_modules

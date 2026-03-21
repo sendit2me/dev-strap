@@ -4,6 +4,7 @@ services:
       context: ${APP_SOURCE}
       dockerfile: Dockerfile
     container_name: ${PROJECT_NAME}-app
+    env_file: project.env
     volumes:
       - ${APP_SOURCE}:/app
       - devstack-go-modules:/go/pkg/mod
