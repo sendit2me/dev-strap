@@ -1,8 +1,15 @@
 include:
+  - path: services/app.yml
+    project_directory: .
   - path: services/database.yml
+    project_directory: .
     env_file: services/database.env
   - path: services/redis.yml
+    project_directory: .
   - path: services/caddy.yml
+    project_directory: .
+  - path: services/wiremock.yml
+    project_directory: .
 
 networks:
   devstack-internal:

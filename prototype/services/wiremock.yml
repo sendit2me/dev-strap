@@ -1,0 +1,14 @@
+services:
+  wiremock:
+    image: wiremock/wiremock:latest
+    container_name: ${PROJECT_NAME}-wiremock
+    command: --port 8080 --verbose
+    volumes:
+      - ./mocks/stripe/mappings:/home/wiremock/mappings/stripe:ro
+    networks:
+      - devstack-internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/__admin/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

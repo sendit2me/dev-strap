@@ -1,0 +1,8 @@
+services:
+  app:
+    build:
+      context: ${APP_SOURCE}
+      dockerfile: Dockerfile
+    container_name: ${PROJECT_NAME}-app
+    networks:
+      - devstack-internal
