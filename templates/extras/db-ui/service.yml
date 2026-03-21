@@ -1,3 +1,4 @@
+services:
   db-ui:
     image: adminer:latest
     container_name: ${PROJECT_NAME}-db-ui
@@ -10,7 +11,7 @@
       db:
         condition: service_healthy
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/"]
       interval: 5s

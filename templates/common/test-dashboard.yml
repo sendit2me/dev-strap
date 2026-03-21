@@ -1,0 +1,12 @@
+services:
+  test-dashboard:
+    image: busybox:latest
+    container_name: ${PROJECT_NAME}-test-dashboard
+    ports:
+      - "${TEST_DASHBOARD_PORT:-8082}:8080"
+    volumes:
+      - ./tests/results:/results:ro
+    working_dir: /results
+    command: httpd -f -p 8080 -h /results
+    networks:
+      - devstack-internal

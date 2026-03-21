@@ -1,3 +1,4 @@
+services:
   frontend:
     build:
       context: ${FRONTEND_SOURCE}
@@ -6,7 +7,7 @@
     volumes:
       - ${FRONTEND_SOURCE}:/app
       - /app/node_modules
-      - ${PROJECT_NAME}-certs:/certs:ro
+      - devstack-certs:/certs:ro
     environment:
       - NODE_ENV=development
       - CHOKIDAR_USEPOLLING=true
@@ -16,5 +17,13 @@
     depends_on:
       cert-gen:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5173/"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
+
+volumes:
+  devstack-certs:

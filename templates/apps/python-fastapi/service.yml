@@ -1,3 +1,4 @@
+services:
   app:
     build:
       context: ${APP_SOURCE}
@@ -5,8 +6,8 @@
     container_name: ${PROJECT_NAME}-app
     volumes:
       - ${APP_SOURCE}:/app
-      - ${PROJECT_NAME}-certs:/certs:ro
-      - ${PROJECT_NAME}-python-cache:/root/.cache
+      - devstack-certs:/certs:ro
+      - devstack-python-cache:/root/.cache
     working_dir: /app
     environment:
       - PYTHONUNBUFFERED=1
@@ -22,5 +23,14 @@
     depends_on:
       cert-gen:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
+
+volumes:
+  devstack-python-cache:
+  devstack-certs:

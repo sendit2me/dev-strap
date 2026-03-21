@@ -1,3 +1,4 @@
+services:
   grafana:
     image: grafana/grafana:latest
     container_name: ${PROJECT_NAME}-grafana
@@ -9,12 +10,12 @@
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
     volumes:
-      - ${DEVSTACK_DIR}/templates/extras/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./templates/extras/grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       prometheus:
         condition: service_healthy
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/health"]
       interval: 10s

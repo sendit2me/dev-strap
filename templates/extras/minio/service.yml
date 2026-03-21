@@ -1,3 +1,4 @@
+services:
   minio:
     image: minio/minio:latest
     container_name: ${PROJECT_NAME}-minio
@@ -9,11 +10,14 @@
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     volumes:
-      - ${PROJECT_NAME}-minio-data:/data
+      - devstack-minio-data:/data
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+volumes:
+  devstack-minio-data:

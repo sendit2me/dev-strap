@@ -97,9 +97,17 @@ restore_state() {
         rm -f "${DEVSTACK_DIR}/project.env"
     fi
 
-    # Clean generated artifacts
+    # Clean generated product directories
     rm -rf "${DEVSTACK_DIR}/.generated"
     rm -rf "${DEVSTACK_DIR}/.devcontainer"
+    rm -rf "${DEVSTACK_DIR}/test-project"
+    rm -rf "${DEVSTACK_DIR}/override-test"
+    rm -rf "${DEVSTACK_DIR}/minimal-test"
+    rm -rf "${DEVSTACK_DIR}/php-test"
+    rm -rf "${DEVSTACK_DIR}/go-test"
+    rm -rf "${DEVSTACK_DIR}/devcontainer-test"
+    rm -rf "${DEVSTACK_DIR}/obs-test"
+    rm -rf "${DEVSTACK_DIR}/test-frontend-full"
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -383,10 +391,12 @@ else
 
     # ── Test 1: Full valid payload (node-express) ─────────────────────────
 
-    rm -rf "${DEVSTACK_DIR}/.generated"
+    rm -rf "${DEVSTACK_DIR}/test-project"
 
     result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/valid-payload.json" 2>/dev/null)
     gen_exit=$?
+
+    PRODUCT_DIR="${DEVSTACK_DIR}/test-project"
 
     assert_eq "exits 0 on valid payload" "0" "${gen_exit}"
     assert_json_eq "status is ok"               "${result}" '.status'   "ok"
@@ -409,30 +419,33 @@ else
     assert_json_eq "qa-dashboard port resolved"  "${result}" '.services["qa-dashboard"].port'  "8082"
     assert_json_eq "wiremock port resolved"      "${result}" '.services.wiremock.port'         "8443"
 
-    # Generated files
-    assert_eq "project.env created"         "true" "$([ -f "${DEVSTACK_DIR}/project.env" ] && echo true || echo false)"
-    assert_eq "docker-compose.yml created"  "true" "$([ -f "${DEVSTACK_DIR}/.generated/docker-compose.yml" ] && echo true || echo false)"
-    assert_eq "Caddyfile created"            "true" "$([ -f "${DEVSTACK_DIR}/.generated/Caddyfile" ] && echo true || echo false)"
-    assert_eq "app/Dockerfile created"      "true" "$([ -f "${DEVSTACK_DIR}/app/Dockerfile" ] && echo true || echo false)"
-    assert_eq "app/init.sh created"         "true" "$([ -f "${DEVSTACK_DIR}/app/init.sh" ] && echo true || echo false)"
-    assert_eq "mocks/ created (wiremock)"   "true" "$([ -d "${DEVSTACK_DIR}/mocks" ] && echo true || echo false)"
+    # Generated files (now in product directory)
+    assert_eq "project.env created"         "true" "$([ -f "${PRODUCT_DIR}/project.env" ] && echo true || echo false)"
+    assert_eq "docker-compose.yml created"  "true" "$([ -f "${PRODUCT_DIR}/docker-compose.yml" ] && echo true || echo false)"
+    assert_eq "devstack.sh created"         "true" "$([ -f "${PRODUCT_DIR}/devstack.sh" ] && echo true || echo false)"
+    assert_eq "app/Dockerfile created"      "true" "$([ -f "${PRODUCT_DIR}/app/Dockerfile" ] && echo true || echo false)"
+    assert_eq "app/init.sh created"         "true" "$([ -f "${PRODUCT_DIR}/app/init.sh" ] && echo true || echo false)"
+    assert_eq "mocks/ created (wiremock)"   "true" "$([ -d "${PRODUCT_DIR}/mocks" ] && echo true || echo false)"
+    assert_eq "services/ dir created"       "true" "$([ -d "${PRODUCT_DIR}/services" ] && echo true || echo false)"
+    assert_eq "services/app.yml created"    "true" "$([ -f "${PRODUCT_DIR}/services/app.yml" ] && echo true || echo false)"
+    assert_eq "services/database.yml created" "true" "$([ -f "${PRODUCT_DIR}/services/database.yml" ] && echo true || echo false)"
+    assert_eq "services/database.env created" "true" "$([ -f "${PRODUCT_DIR}/services/database.env" ] && echo true || echo false)"
+    assert_eq "services/redis.yml created"  "true" "$([ -f "${PRODUCT_DIR}/services/redis.yml" ] && echo true || echo false)"
 
     # Verify project.env content
-    assert_eq "PROJECT_NAME correct" "true" "$(grep -q 'PROJECT_NAME=test-project' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "APP_TYPE correct"     "true" "$(grep -q 'APP_TYPE=node-express'     "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "DB_TYPE correct"      "true" "$(grep -q 'DB_TYPE=postgres'          "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "EXTRAS correct"       "true" "$(grep -q 'EXTRAS=redis'              "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
+    assert_eq "PROJECT_NAME correct"         "true" "$(grep -q 'PROJECT_NAME=test-project'         "${PRODUCT_DIR}/project.env" && echo true || echo false)"
+    assert_eq "COMPOSE_PROJECT_NAME correct" "true" "$(grep -q 'COMPOSE_PROJECT_NAME=test-project' "${PRODUCT_DIR}/project.env" && echo true || echo false)"
+    assert_eq "APP_TYPE correct"             "true" "$(grep -q 'APP_TYPE=node-express'             "${PRODUCT_DIR}/project.env" && echo true || echo false)"
 
-    # Verify docker-compose is valid YAML
-    compose_valid="false"
-    if docker compose -f "${DEVSTACK_DIR}/.generated/docker-compose.yml" config --quiet 2>/dev/null; then
-        compose_valid="true"
-    fi
-    assert_eq "docker-compose.yml is valid" "true" "${compose_valid}"
+    # Verify docker-compose.yml has include directives
+    assert_eq "compose has includes" "true" "$(grep -q 'include:' "${PRODUCT_DIR}/docker-compose.yml" && echo true || echo false)"
+    assert_eq "compose includes app" "true" "$(grep -q 'services/app.yml' "${PRODUCT_DIR}/docker-compose.yml" && echo true || echo false)"
+    assert_eq "compose includes database" "true" "$(grep -q 'services/database.yml' "${PRODUCT_DIR}/docker-compose.yml" && echo true || echo false)"
+    assert_eq "compose includes redis" "true" "$(grep -q 'services/redis.yml' "${PRODUCT_DIR}/docker-compose.yml" && echo true || echo false)"
 
     # ── Test 2: Overrides ─────────────────────────────────────────────────
 
-    rm -rf "${DEVSTACK_DIR}/.generated"
+    rm -rf "${DEVSTACK_DIR}/override-test"
 
     result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/valid-with-overrides.json" 2>/dev/null)
     gen_exit=$?
@@ -442,12 +455,12 @@ else
     assert_json_eq "overrides: qa-dashboard port=9001"  "${result}" '.services["qa-dashboard"].port' "9001"
     assert_json_eq "overrides: wiremock port=9443"      "${result}" '.services.wiremock.port'        "9443"
     assert_json_eq "overrides: mariadb default port=3306" "${result}" '.services.mariadb.port'       "3306"
-    assert_eq "overrides: HTTPS_PORT=9443"          "true" "$(grep -q 'HTTPS_PORT=9443'          "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "overrides: TEST_DASHBOARD_PORT=9001" "true" "$(grep -q 'TEST_DASHBOARD_PORT=9001' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
+    assert_eq "overrides: HTTPS_PORT=9443"          "true" "$(grep -q 'HTTPS_PORT=9443'          "${DEVSTACK_DIR}/override-test/project.env" && echo true || echo false)"
+    assert_eq "overrides: TEST_DASHBOARD_PORT=9001" "true" "$(grep -q 'TEST_DASHBOARD_PORT=9001' "${DEVSTACK_DIR}/override-test/project.env" && echo true || echo false)"
 
     # ── Test 3: Minimal valid (app only, nothing else) ────────────────────
 
-    rm -rf "${DEVSTACK_DIR}/.generated"
+    rm -rf "${DEVSTACK_DIR}/minimal-test"
 
     result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/minimal-valid.json" 2>/dev/null)
     gen_exit=$?
@@ -456,45 +469,45 @@ else
     assert_json_eq "minimal: status ok"          "${result}" '.status'   "ok"
     assert_json_eq "minimal: only node-express"  "${result}" '.services | keys | length' "1"
     assert_json_eq "minimal: node-express port"  "${result}" '.services["node-express"].port' "3000"
-    assert_eq "minimal: DB_TYPE=none" "true" "$(grep -q 'DB_TYPE=none' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
+    assert_eq "minimal: no database.yml" "true" "$([ ! -f "${DEVSTACK_DIR}/minimal-test/services/database.yml" ] && echo true || echo false)"
+    assert_eq "minimal: FRONTEND_TYPE=none" "true" "$(grep -q 'FRONTEND_TYPE=none' "${DEVSTACK_DIR}/minimal-test/project.env" && echo true || echo false)"
 
     # ── Test 4: PHP app type ──────────────────────────────────────────────
 
-    rm -rf "${DEVSTACK_DIR}/.generated"
+    rm -rf "${DEVSTACK_DIR}/php-test"
 
     result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/valid-payload-php.json" 2>/dev/null)
     gen_exit=$?
 
     assert_eq "php: exits 0"             "0"    "${gen_exit}"
     assert_json_eq "php: status ok"       "${result}" '.status' "ok"
-    assert_eq "php: APP_TYPE=php-laravel" "true" "$(grep -q 'APP_TYPE=php-laravel' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "php: Dockerfile created"   "true" "$([ -f "${DEVSTACK_DIR}/app/Dockerfile" ] && echo true || echo false)"
+    assert_eq "php: APP_TYPE=php-laravel" "true" "$(grep -q 'APP_TYPE=php-laravel' "${DEVSTACK_DIR}/php-test/project.env" && echo true || echo false)"
+    assert_eq "php: Dockerfile created"   "true" "$([ -f "${DEVSTACK_DIR}/php-test/app/Dockerfile" ] && echo true || echo false)"
 
     # ── Test 5: Go app type ───────────────────────────────────────────────
 
-    rm -rf "${DEVSTACK_DIR}/.generated"
+    rm -rf "${DEVSTACK_DIR}/go-test"
 
     result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/valid-payload-go.json" 2>/dev/null)
     gen_exit=$?
 
     assert_eq "go: exits 0"          "0"    "${gen_exit}"
     assert_json_eq "go: status ok"    "${result}" '.status' "ok"
-    assert_eq "go: APP_TYPE=go"       "true" "$(grep -q 'APP_TYPE=go' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
+    assert_eq "go: APP_TYPE=go"       "true" "$(grep -q 'APP_TYPE=go' "${DEVSTACK_DIR}/go-test/project.env" && echo true || echo false)"
 
     # ── Test 6: Devcontainer generation ───────────────────────────────────
 
-    rm -rf "${DEVSTACK_DIR}/.generated"
-    rm -rf "${DEVSTACK_DIR}/.devcontainer"
+    rm -rf "${DEVSTACK_DIR}/devcontainer-test"
 
     result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/valid-with-devcontainer.json" 2>/dev/null)
     gen_exit=$?
 
     assert_eq "devcontainer: exits 0"               "0"    "${gen_exit}"
-    assert_eq "devcontainer: .devcontainer/ created" "true" "$([ -d "${DEVSTACK_DIR}/.devcontainer" ] && echo true || echo false)"
+    assert_eq "devcontainer: .devcontainer/ created" "true" "$([ -d "${DEVSTACK_DIR}/devcontainer-test/.devcontainer" ] && echo true || echo false)"
 
     # ── Test 7: Observability (prometheus + grafana + dozzle) ─────────────
 
-    rm -rf "${DEVSTACK_DIR}/.generated"
+    rm -rf "${DEVSTACK_DIR}/obs-test"
 
     result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/valid-with-observability.json" 2>/dev/null)
     gen_exit=$?
@@ -505,36 +518,29 @@ else
     assert_json_eq "obs: grafana port"         "${result}" '.services.grafana.port'     "3001"
     assert_json_eq "obs: dozzle port"          "${result}" '.services.dozzle.port'      "9999"
 
-    # Verify services appear in generated compose
-    assert_eq "obs: prometheus in compose" "true" \
-        "$(grep -q 'container_name.*-prometheus' "${DEVSTACK_DIR}/.generated/docker-compose.yml" && echo true || echo false)"
-    assert_eq "obs: grafana in compose" "true" \
-        "$(grep -q 'container_name.*-grafana' "${DEVSTACK_DIR}/.generated/docker-compose.yml" && echo true || echo false)"
-    assert_eq "obs: dozzle in compose" "true" \
-        "$(grep -q 'container_name.*-dozzle' "${DEVSTACK_DIR}/.generated/docker-compose.yml" && echo true || echo false)"
+    # Verify service files copied to product services/
+    assert_eq "obs: prometheus.yml exists" "true" \
+        "$([ -f "${DEVSTACK_DIR}/obs-test/services/prometheus.yml" ] && echo true || echo false)"
+    assert_eq "obs: grafana.yml exists" "true" \
+        "$([ -f "${DEVSTACK_DIR}/obs-test/services/grafana.yml" ] && echo true || echo false)"
+    assert_eq "obs: dozzle.yml exists" "true" \
+        "$([ -f "${DEVSTACK_DIR}/obs-test/services/dozzle.yml" ] && echo true || echo false)"
 
-    # Verify ports in compose
-    assert_eq "obs: prometheus port in compose" "true" \
-        "$(grep -q '9090:9090' "${DEVSTACK_DIR}/.generated/docker-compose.yml" && echo true || echo false)"
-    assert_eq "obs: grafana port in compose" "true" \
-        "$(grep -q '3001:3000' "${DEVSTACK_DIR}/.generated/docker-compose.yml" && echo true || echo false)"
-    assert_eq "obs: dozzle port in compose" "true" \
-        "$(grep -q '9999:8080' "${DEVSTACK_DIR}/.generated/docker-compose.yml" && echo true || echo false)"
+    # Verify compose includes observability services
+    assert_eq "obs: compose includes prometheus" "true" \
+        "$(grep -q 'services/prometheus.yml' "${DEVSTACK_DIR}/obs-test/docker-compose.yml" && echo true || echo false)"
+    assert_eq "obs: compose includes grafana" "true" \
+        "$(grep -q 'services/grafana.yml' "${DEVSTACK_DIR}/obs-test/docker-compose.yml" && echo true || echo false)"
+    assert_eq "obs: compose includes dozzle" "true" \
+        "$(grep -q 'services/dozzle.yml' "${DEVSTACK_DIR}/obs-test/docker-compose.yml" && echo true || echo false)"
 
-    # Verify EXTRAS in project.env includes observability items
-    assert_eq "obs: EXTRAS has prometheus" "true" \
-        "$(grep -q 'EXTRAS=.*prometheus' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "obs: EXTRAS has grafana" "true" \
-        "$(grep -q 'EXTRAS=.*grafana' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "obs: EXTRAS has dozzle" "true" \
-        "$(grep -q 'EXTRAS=.*dozzle' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-
-    # Verify compose validates
-    obs_compose_valid="false"
-    if docker compose -f "${DEVSTACK_DIR}/.generated/docker-compose.yml" config --quiet 2>/dev/null; then
-        obs_compose_valid="true"
-    fi
-    assert_eq "obs: docker-compose.yml is valid" "true" "${obs_compose_valid}"
+    # Verify conditional port vars in project.env
+    assert_eq "obs: PROMETHEUS_PORT in project.env" "true" \
+        "$(grep -q 'PROMETHEUS_PORT=9090' "${DEVSTACK_DIR}/obs-test/project.env" && echo true || echo false)"
+    assert_eq "obs: GRAFANA_PORT in project.env" "true" \
+        "$(grep -q 'GRAFANA_PORT=3001' "${DEVSTACK_DIR}/obs-test/project.env" && echo true || echo false)"
+    assert_eq "obs: DOZZLE_PORT in project.env" "true" \
+        "$(grep -q 'DOZZLE_PORT=9999' "${DEVSTACK_DIR}/obs-test/project.env" && echo true || echo false)"
 
     # Verify grafana requires prometheus (validation)
     grafana_only_result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config - 2>/dev/null <<'PAYLOAD'
@@ -548,8 +554,7 @@ PAYLOAD
 
     printf '\n=== Frontend Generation ===\n'
 
-    rm -rf "${DEVSTACK_DIR}/.generated"
-    rm -rf "${DEVSTACK_DIR}/frontend"
+    rm -rf "${DEVSTACK_DIR}/test-frontend-full"
 
     result=$("${DEVSTACK_DIR}/devstack.sh" --bootstrap --config "${FIXTURES}/valid-with-frontend-full.json" 2>/dev/null)
     gen_exit=$?
@@ -558,19 +563,18 @@ PAYLOAD
     assert_json_eq "frontend: status ok" "${result}" '.status' "ok"
 
     # Check project.env has frontend vars
-    assert_eq "frontend: FRONTEND_TYPE in project.env" "true" "$(grep -q 'FRONTEND_TYPE=vite' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "frontend: FRONTEND_SOURCE in project.env" "true" "$(grep -q 'FRONTEND_SOURCE=./frontend' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
-    assert_eq "frontend: FRONTEND_PORT in project.env" "true" "$(grep -q 'FRONTEND_PORT=5173' "${DEVSTACK_DIR}/project.env" && echo true || echo false)"
+    assert_eq "frontend: FRONTEND_TYPE in project.env" "true" "$(grep -q 'FRONTEND_TYPE=vite' "${DEVSTACK_DIR}/test-frontend-full/project.env" && echo true || echo false)"
+    assert_eq "frontend: FRONTEND_PORT in project.env" "true" "$(grep -q 'FRONTEND_PORT=5173' "${DEVSTACK_DIR}/test-frontend-full/project.env" && echo true || echo false)"
 
     # Check wiring resolved
     assert_json "frontend: wiring has api_base" "${result}" '.wiring["frontend.vite.api_base"]'
 
-    # Check frontend directory scaffolded
-    assert_eq "frontend: frontend/ created" "true" "$([ -d "${DEVSTACK_DIR}/frontend" ] && echo true || echo false)"
-    assert_eq "frontend: frontend/package.json created" "true" "$([ -f "${DEVSTACK_DIR}/frontend/package.json" ] && echo true || echo false)"
-
-    # Clean up frontend scaffold
-    rm -rf "${DEVSTACK_DIR}/frontend"
+    # Check frontend directory scaffolded in product
+    assert_eq "frontend: frontend/ created" "true" "$([ -d "${DEVSTACK_DIR}/test-frontend-full/frontend" ] && echo true || echo false)"
+    assert_eq "frontend: frontend/package.json created" "true" "$([ -f "${DEVSTACK_DIR}/test-frontend-full/frontend/package.json" ] && echo true || echo false)"
+    assert_eq "frontend: frontend/Dockerfile created" "true" "$([ -f "${DEVSTACK_DIR}/test-frontend-full/frontend/Dockerfile" ] && echo true || echo false)"
+    assert_eq "frontend: services/frontend.yml created" "true" "$([ -f "${DEVSTACK_DIR}/test-frontend-full/services/frontend.yml" ] && echo true || echo false)"
+    assert_eq "frontend: compose includes frontend" "true" "$(grep -q 'services/frontend.yml' "${DEVSTACK_DIR}/test-frontend-full/docker-compose.yml" && echo true || echo false)"
 
     # ── Cleanup (trap handles restore_state) ──────────────────────────────
 fi

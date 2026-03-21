@@ -1,3 +1,4 @@
+services:
   swagger-ui:
     image: swaggerapi/swagger-ui:latest
     container_name: ${PROJECT_NAME}-swagger-ui
@@ -11,7 +12,7 @@
       app:
         condition: service_started
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ > /dev/null"]
       interval: 10s

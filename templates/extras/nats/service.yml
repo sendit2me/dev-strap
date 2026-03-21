@@ -1,3 +1,4 @@
+services:
   nats:
     image: nats:2-alpine
     container_name: ${PROJECT_NAME}-nats
@@ -6,11 +7,14 @@
       - "${NATS_PORT}:4222"
       - "${NATS_MONITOR_PORT}:8222"
     volumes:
-      - ${PROJECT_NAME}-nats-data:/data
+      - devstack-nats-data:/data
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8222/healthz"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+volumes:
+  devstack-nats-data:

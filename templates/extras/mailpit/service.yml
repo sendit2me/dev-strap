@@ -1,3 +1,4 @@
+services:
   mailpit:
     image: axllent/mailpit:latest
     container_name: ${PROJECT_NAME}-mailpit
@@ -7,7 +8,7 @@
       MP_SMTP_AUTH_ACCEPT_ANY: 1
       MP_SMTP_AUTH_ALLOW_INSECURE: 1
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8025/"]
       interval: 5s

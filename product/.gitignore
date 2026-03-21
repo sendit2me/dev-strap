@@ -1,0 +1,10 @@
+# Runtime artifacts
+domains.txt
+caddy/Caddyfile
+tests/results/
+tests/playwright/node_modules/
+tests/playwright/package-lock.json
+
+# Generated service files (regenerated from mocks/ on start)
+services/caddy.yml
+services/wiremock.yml

@@ -1,3 +1,4 @@
+services:
   app:
     build:
       context: ${APP_SOURCE}
@@ -5,12 +6,12 @@
     container_name: ${PROJECT_NAME}-app
     volumes:
       - ${APP_SOURCE}:/var/www/html
-      - ${PROJECT_NAME}-certs:/certs:ro
+      - devstack-certs:/certs:ro
     environment:
       - APP_ENV=local
       - APP_DEBUG=true
       - APP_URL=http://${PROJECT_NAME}.local
-      - DB_CONNECTION=mysql
+      - DB_CONNECTION=${DB_CONNECTION}
       - DB_HOST=db
       - DB_PORT=${DB_PORT}
       - DB_DATABASE=${DB_NAME}
@@ -19,5 +20,13 @@
     depends_on:
       cert-gen:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm -t 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
+
+volumes:
+  devstack-certs:

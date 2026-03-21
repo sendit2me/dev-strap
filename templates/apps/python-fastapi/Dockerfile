@@ -4,8 +4,12 @@ FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # CA certificates package (needed for update-ca-certificates in init)
+# gcc + libpq-dev + pkg-config needed for building database driver packages (psycopg2, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    gcc \
+    libpq-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

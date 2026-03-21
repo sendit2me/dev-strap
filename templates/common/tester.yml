@@ -1,0 +1,19 @@
+services:
+  tester:
+    image: mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: ${PROJECT_NAME}-tester
+    working_dir: /tests
+    volumes:
+      - ./tests/playwright:/tests
+      - ./tests/results:/results
+      - devstack-certs:/certs:ro
+    environment:
+      - BASE_URL=https://web:443
+      - NODE_EXTRA_CA_CERTS=/certs/ca.crt
+      - PLAYWRIGHT_HTML_REPORT=/results/report
+    depends_on:
+      web:
+        condition: service_healthy
+    entrypoint: ["tail", "-f", "/dev/null"]
+    networks:
+      - devstack-internal

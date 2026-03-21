@@ -1,3 +1,4 @@
+services:
   app:
     build:
       context: ${APP_SOURCE}
@@ -5,9 +6,9 @@
     container_name: ${PROJECT_NAME}-app
     volumes:
       - ${APP_SOURCE}:/app
-      - ${PROJECT_NAME}-certs:/certs:ro
-      - ${PROJECT_NAME}-cargo-registry:/usr/local/cargo/registry
-      - ${PROJECT_NAME}-cargo-target:/app/target
+      - devstack-certs:/certs:ro
+      - devstack-cargo-registry:/usr/local/cargo/registry
+      - devstack-cargo-target:/app/target
     working_dir: /app
     environment:
       - RUST_LOG=debug
@@ -21,5 +22,15 @@
     depends_on:
       cert-gen:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 120
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
+
+volumes:
+  devstack-cargo-registry:
+  devstack-cargo-target:
+  devstack-certs:

@@ -70,7 +70,7 @@ app.get('/', (req, res) => {
         <body>
             <h1>DevStack Example App</h1>
             <p>This app demonstrates transparent mock interception. The code makes real HTTPS
-               requests to external APIs — but DNS + nginx + WireMock intercept them and return
+               requests to external APIs — but DNS + Caddy + WireMock intercept them and return
                mock responses. <strong>No isDev flags, no code changes.</strong></p>
 
             <h2>API Endpoints</h2>

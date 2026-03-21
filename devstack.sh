@@ -1026,8 +1026,7 @@ cmd_contract_bootstrap() {
         exit 1
     fi
 
-    # Validation passed — Docker required for generation
-    check_docker
+    # Validation passed — assemble product (no Docker needed, just file copying)
 
     # Generate environment (all log output to stderr, stdout reserved for JSON)
     if ! generate_from_bootstrap "${payload}" "${manifest}"; then
@@ -1295,13 +1294,13 @@ resolve_wiring() {
     '
 }
 
-# Generate project files from a validated bootstrap payload.
+# Generate a self-contained product directory from a validated bootstrap payload.
 # All output goes to stderr; stdout is reserved for the JSON response.
 generate_from_bootstrap() {
     local payload="$1"
     local manifest_file="$2"
 
-    # ── Extract settings from payload ──────────────────────────────────────
+    # ── 1. Extract selections from payload ────────────────────────────────
     # (printf avoids echo interpreting flags like -n/-e in edge cases)
     local project_name app_type db_type extras
     project_name=$(printf '%s\n' "${payload}" | jq -r '.project')
@@ -1323,14 +1322,13 @@ generate_from_bootstrap() {
         frontend_port=$(printf '%s\n' "${payload}" | jq -r '.selections.frontend.vite.overrides.port')
     fi
 
-    # Derive database port
+    # ── 2. Derive ports ───────────────────────────────────────────────────
     local db_port=3306
     case "${db_type}" in
         postgres) db_port=5432 ;;
         mariadb)  db_port=3306 ;;
     esac
 
-    # ── Resolve host ports (manifest defaults + overrides) ─────────────────
     local http_port=8080
     local https_port=8443
     local test_dashboard_port=8082
@@ -1340,6 +1338,10 @@ generate_from_bootstrap() {
     local dozzle_port=9999
     local adminer_port=8083
     local swagger_port=8084
+    local nats_port=4222
+    local nats_monitor_port=8222
+    local minio_port=9000
+    local minio_console_port=9001
 
     if printf '%s\n' "${payload}" | jq -e '.selections.tooling.wiremock.overrides.port' &>/dev/null; then
         https_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling.wiremock.overrides.port')
@@ -1365,57 +1367,198 @@ generate_from_bootstrap() {
     if printf '%s\n' "${payload}" | jq -e '.selections.tooling["swagger-ui"].overrides.port' &>/dev/null; then
         swagger_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling["swagger-ui"].overrides.port')
     fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.services.nats.overrides.client_port' &>/dev/null; then
+        nats_port=$(printf '%s\n' "${payload}" | jq -r '.selections.services.nats.overrides.client_port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.services.nats.overrides.monitor_port' &>/dev/null; then
+        nats_monitor_port=$(printf '%s\n' "${payload}" | jq -r '.selections.services.nats.overrides.monitor_port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.services.minio.overrides.api_port' &>/dev/null; then
+        minio_port=$(printf '%s\n' "${payload}" | jq -r '.selections.services.minio.overrides.api_port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.services.minio.overrides.console_port' &>/dev/null; then
+        minio_console_port=$(printf '%s\n' "${payload}" | jq -r '.selections.services.minio.overrides.console_port')
+    fi
 
-    # ── 1. Write project.env ───────────────────────────────────────────────
+    # ── 3. Determine destination directory ────────────────────────────────
+    local dest="${DEVSTACK_DIR}/${project_name}"
+    log "Assembling product in ${dest}/" >&2
+
+    # ── 4. Create directory structure ─────────────────────────────────────
+    mkdir -p "${dest}/services"
+    mkdir -p "${dest}/caddy"
+    mkdir -p "${dest}/certs"
+    mkdir -p "${dest}/app"
+    mkdir -p "${dest}/tests/playwright"
+    mkdir -p "${dest}/tests/results"
+    mkdir -p "${dest}/mocks"
+
+    # ── 5. Copy product runtime files ─────────────────────────────────────
+    log "Copying product runtime files..." >&2
+    if [ -f "${DEVSTACK_DIR}/product/devstack.sh" ]; then
+        cp "${DEVSTACK_DIR}/product/devstack.sh" "${dest}/devstack.sh"
+        chmod +x "${dest}/devstack.sh"
+    else
+        log_warn "product/devstack.sh not found — product runtime will be incomplete" >&2
+    fi
+
+    if [ -f "${DEVSTACK_DIR}/product/certs/generate.sh" ]; then
+        cp "${DEVSTACK_DIR}/product/certs/generate.sh" "${dest}/certs/generate.sh"
+    else
+        log_warn "product/certs/generate.sh not found" >&2
+    fi
+
+    if [ -f "${DEVSTACK_DIR}/product/.gitignore" ]; then
+        cp "${DEVSTACK_DIR}/product/.gitignore" "${dest}/.gitignore"
+    fi
+
+    # ── 6. Copy common service templates ──────────────────────────────────
+    log "Copying common service templates..." >&2
+    for common_file in cert-gen.yml tester.yml test-dashboard.yml; do
+        if [ -f "${DEVSTACK_DIR}/templates/common/${common_file}" ]; then
+            cp "${DEVSTACK_DIR}/templates/common/${common_file}" "${dest}/services/${common_file}"
+        else
+            log_warn "templates/common/${common_file} not found" >&2
+        fi
+    done
+
+    # ── 7. Copy selected service templates ────────────────────────────────
+    log "Copying selected service templates..." >&2
+
+    # App template
+    if [ -f "${DEVSTACK_DIR}/templates/apps/${app_type}/service.yml" ]; then
+        cp "${DEVSTACK_DIR}/templates/apps/${app_type}/service.yml" "${dest}/services/app.yml"
+    fi
+    if [ -f "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" ]; then
+        cp "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" "${dest}/app/Dockerfile"
+    fi
+
+    # Database template (if selected)
+    if [ "${db_type}" != "none" ]; then
+        if [ -f "${DEVSTACK_DIR}/templates/databases/${db_type}/service.yml" ]; then
+            cp "${DEVSTACK_DIR}/templates/databases/${db_type}/service.yml" "${dest}/services/database.yml"
+        fi
+    fi
+
+    # Frontend template (if selected)
+    if [ "${frontend_type}" != "none" ]; then
+        mkdir -p "${dest}/frontend"
+        if [ -f "${DEVSTACK_DIR}/templates/frontends/${frontend_type}/service.yml" ]; then
+            cp "${DEVSTACK_DIR}/templates/frontends/${frontend_type}/service.yml" "${dest}/services/frontend.yml"
+        fi
+        if [ -f "${DEVSTACK_DIR}/templates/frontends/${frontend_type}/Dockerfile" ]; then
+            cp "${DEVSTACK_DIR}/templates/frontends/${frontend_type}/Dockerfile" "${dest}/frontend/Dockerfile"
+        fi
+    fi
+
+    # Extras templates (services + observability + tooling extras)
+    IFS=',' read -ra extra_list <<< "${extras}"
+    for extra in "${extra_list[@]}"; do
+        extra=$(printf '%s' "${extra}" | tr -d '[:space:]')
+        [ -z "${extra}" ] && continue
+        if [ -f "${DEVSTACK_DIR}/templates/extras/${extra}/service.yml" ]; then
+            cp "${DEVSTACK_DIR}/templates/extras/${extra}/service.yml" "${dest}/services/${extra}.yml"
+            log "  Copied service: ${extra}" >&2
+        fi
+        # Copy extra support files (e.g., grafana provisioning, prometheus config)
+        if [ -d "${DEVSTACK_DIR}/templates/extras/${extra}/provisioning" ]; then
+            cp -r "${DEVSTACK_DIR}/templates/extras/${extra}/provisioning" "${dest}/services/${extra}-provisioning"
+        fi
+        if [ -f "${DEVSTACK_DIR}/templates/extras/${extra}/prometheus.yml" ]; then
+            cp "${DEVSTACK_DIR}/templates/extras/${extra}/prometheus.yml" "${dest}/services/prometheus.yml"
+        fi
+    done
+
+    # ── 8. Write project.env ──────────────────────────────────────────────
     log "Writing project.env..." >&2
-    cat > "${DEVSTACK_DIR}/project.env" <<ENV
-# =============================================================================
-# DevStack Project Configuration
-# Generated by: ./devstack.sh --bootstrap
-# =============================================================================
-
+    cat > "${dest}/project.env" <<ENV
+# Project configuration
 PROJECT_NAME=${project_name}
+COMPOSE_PROJECT_NAME=${project_name}
 NETWORK_SUBNET=172.28.0.0/24
 
+# Application
 APP_TYPE=${app_type}
 APP_SOURCE=./app
-APP_INIT_SCRIPT=./app/init.sh
+FRONTEND_SOURCE=./frontend
 
+# Ports
 HTTP_PORT=${http_port}
 HTTPS_PORT=${https_port}
 TEST_DASHBOARD_PORT=${test_dashboard_port}
-MAILPIT_PORT=${mailpit_port}
-PROMETHEUS_PORT=${prometheus_port}
-GRAFANA_PORT=${grafana_port}
-DOZZLE_PORT=${dozzle_port}
-ADMINER_PORT=${adminer_port}
-SWAGGER_PORT=${swagger_port}
 
+# Database
 DB_TYPE=${db_type}
+DB_PORT=${db_port}
 DB_NAME=${project_name}
 DB_USER=${project_name}
 DB_PASSWORD=secret
 DB_ROOT_PASSWORD=root
 
-EXTRAS=${extras}
-
+# Frontend
 FRONTEND_TYPE=${frontend_type}
-FRONTEND_SOURCE=./frontend
 FRONTEND_PORT=${frontend_port}
 FRONTEND_API_PREFIX=/api
 ENV
 
-    # ── 1b. Resolve wiring rules and append to project.env ────────────────
+    # Create .env symlink (Docker Compose reads .env by default)
+    ln -sf project.env "${dest}/.env"
+
+    # Append conditional port vars only when the service is selected
+    {
+        if printf '%s\n' "${payload}" | jq -e '.selections.services.mailpit' &>/dev/null; then
+            printf 'MAILPIT_PORT=%s\n' "${mailpit_port}"
+        fi
+        if printf '%s\n' "${payload}" | jq -e '.selections.observability.prometheus' &>/dev/null; then
+            printf 'PROMETHEUS_PORT=%s\n' "${prometheus_port}"
+        fi
+        if printf '%s\n' "${payload}" | jq -e '.selections.observability.grafana' &>/dev/null; then
+            printf 'GRAFANA_PORT=%s\n' "${grafana_port}"
+        fi
+        if printf '%s\n' "${payload}" | jq -e '.selections.observability.dozzle' &>/dev/null; then
+            printf 'DOZZLE_PORT=%s\n' "${dozzle_port}"
+        fi
+        if printf '%s\n' "${payload}" | jq -e '.selections.tooling["db-ui"]' &>/dev/null; then
+            printf 'ADMINER_PORT=%s\n' "${adminer_port}"
+        fi
+        if printf '%s\n' "${payload}" | jq -e '.selections.tooling["swagger-ui"]' &>/dev/null; then
+            printf 'SWAGGER_PORT=%s\n' "${swagger_port}"
+        fi
+        if printf '%s\n' "${payload}" | jq -e '.selections.services.nats' &>/dev/null; then
+            printf 'NATS_PORT=%s\n' "${nats_port}"
+            printf 'NATS_MONITOR_PORT=%s\n' "${nats_monitor_port}"
+        fi
+        if printf '%s\n' "${payload}" | jq -e '.selections.services.minio' &>/dev/null; then
+            printf 'MINIO_PORT=%s\n' "${minio_port}"
+            printf 'MINIO_CONSOLE_PORT=%s\n' "${minio_console_port}"
+        fi
+    } >> "${dest}/project.env"
+
+    # ── 9. Write per-service env files ────────────────────────────────────
+    if [ "${db_type}" != "none" ]; then
+        log "Writing database.env..." >&2
+        local db_connection="mysql"
+        case "${db_type}" in
+            postgres) db_connection="pgsql" ;;
+            mariadb)  db_connection="mysql" ;;
+        esac
+
+        cat > "${dest}/services/database.env" <<DBENV
+DB_NAME=${project_name}
+DB_USER=${project_name}
+DB_PASSWORD=secret
+DB_ROOT_PASSWORD=root
+DB_CONNECTION=${db_connection}
+DBENV
+    fi
+
+    # ── 10. Resolve wiring → append to project.env ────────────────────────
     local wiring_json
     wiring_json=$(resolve_wiring "${payload}" "${manifest_file}")
 
     if [ -n "${wiring_json}" ] && [ "${wiring_json}" != "{}" ]; then
         log "Resolving auto-wiring rules..." >&2
 
-        # Convert wiring JSON to env var lines and append to project.env
-        # Key format: "frontend.vite.proxy_target" → "VITE_PROXY_TARGET"
-        # Key format: "app.go.redis_url" → "REDIS_URL"
-        # We extract the last segment, uppercase it, and write as env var
         local wiring_envs
         wiring_envs=$(printf '%s\n' "${wiring_json}" | jq -r '
             to_entries[] |
@@ -1428,87 +1571,115 @@ ENV
                 echo ""
                 echo "# Auto-wiring (resolved from manifest rules)"
                 printf '%s\n' "${wiring_envs}"
-            } >> "${DEVSTACK_DIR}/project.env"
+            } >> "${dest}/project.env"
             log "  Wrote wiring env vars to project.env" >&2
         fi
     fi
 
-    # ── 2. Scaffold app directory ──────────────────────────────────────────
-    log "Scaffolding app directory..." >&2
-    mkdir -p "${DEVSTACK_DIR}/app"
+    # ── 11. Assemble docker-compose.yml ───────────────────────────────────
+    log "Assembling docker-compose.yml..." >&2
 
-    if [ -f "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" ]; then
-        cp "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" \
-           "${DEVSTACK_DIR}/app/Dockerfile"
+    local includes=""
+
+    # Always present: cert-gen
+    includes="${includes}  - path: services/cert-gen.yml
+    project_directory: .
+"
+
+    # Always present: app
+    includes="${includes}  - path: services/app.yml
+    project_directory: .
+"
+
+    # caddy.yml — generated at runtime by product devstack.sh
+    includes="${includes}  - path: services/caddy.yml
+    project_directory: .
+"
+
+    # Database (conditional)
+    if [ "${db_type}" != "none" ]; then
+        includes="${includes}  - path: services/database.yml
+    project_directory: .
+    env_file: services/database.env
+"
     fi
 
-    if [ ! -f "${DEVSTACK_DIR}/app/init.sh" ]; then
-        cat > "${DEVSTACK_DIR}/app/init.sh" <<'INIT_SH'
-#!/bin/sh
-echo "[init] App initialization starting..."
-# Add your setup steps here (install deps, run migrations, seed data)
-echo "[init] Done."
-INIT_SH
-        chmod +x "${DEVSTACK_DIR}/app/init.sh"
-    fi
-
-    # ── Scaffold frontend directory (if frontend selected) ─────────────────
+    # Frontend (conditional)
     if [ "${frontend_type}" != "none" ]; then
-        log "Scaffolding frontend directory..." >&2
-        mkdir -p "${DEVSTACK_DIR}/frontend"
-
-        # Copy Dockerfile from template
-        local frontend_dockerfile="${DEVSTACK_DIR}/templates/frontends/${frontend_type}/Dockerfile"
-        if [ -f "${frontend_dockerfile}" ]; then
-            cp "${frontend_dockerfile}" "${DEVSTACK_DIR}/frontend/Dockerfile"
-            log "  Copied frontend Dockerfile from templates/frontends/${frontend_type}/" >&2
-        fi
-
-        # Create minimal package.json if not present
-        if [ ! -f "${DEVSTACK_DIR}/frontend/package.json" ]; then
-            cat > "${DEVSTACK_DIR}/frontend/package.json" <<FRONTPKG
-{
-  "name": "${project_name}-frontend",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build"
-  },
-  "devDependencies": {
-    "vite": "^6.0.0"
-  }
-}
-FRONTPKG
-            log "  Created frontend/package.json" >&2
-        fi
+        includes="${includes}  - path: services/frontend.yml
+    project_directory: .
+"
     fi
 
-    # ── 3. Mocks directory (if wiremock selected) ──────────────────────────
+    # Extras
+    IFS=',' read -ra extra_list <<< "${extras}"
+    for extra in "${extra_list[@]}"; do
+        extra=$(printf '%s' "${extra}" | tr -d '[:space:]')
+        [ -z "${extra}" ] && continue
+        includes="${includes}  - path: services/${extra}.yml
+    project_directory: .
+"
+    done
+
+    # Wiremock (generated at runtime by product devstack.sh)
+    includes="${includes}  - path: services/wiremock.yml
+    project_directory: .
+"
+
+    # Always present: tester
+    includes="${includes}  - path: services/tester.yml
+    project_directory: .
+"
+
+    # Always present: test-dashboard
+    includes="${includes}  - path: services/test-dashboard.yml
+    project_directory: .
+"
+
+    # Write the compose file
+    cat > "${dest}/docker-compose.yml" <<COMPOSE
+include:
+${includes}
+networks:
+  devstack-internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: \${NETWORK_SUBNET}
+COMPOSE
+
+    # ── 12. Scaffold mocks (if wiremock selected) ─────────────────────────
     if printf '%s\n' "${payload}" | jq -e '.selections.tooling.wiremock' &>/dev/null; then
-        log "Creating mocks directory..." >&2
-        mkdir -p "${DEVSTACK_DIR}/mocks"
+        log "Scaffolding mock example..." >&2
+        mkdir -p "${dest}/mocks/example-api/mappings"
+        cat > "${dest}/mocks/example-api/domains" <<'MOCK_DOMAINS'
+api.example.com
+MOCK_DOMAINS
+        cat > "${dest}/mocks/example-api/mappings/example.json" <<'MOCK_MAPPING'
+{
+    "name": "example-api — status endpoint",
+    "request": {
+        "method": "GET",
+        "url": "/v1/status"
+    },
+    "response": {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "jsonBody": {
+            "service": "example-api",
+            "status": "ok",
+            "mocked": true
+        }
+    }
+}
+MOCK_MAPPING
     fi
 
-    # ── 4. Devcontainer (if selected) ─────────────────────────────────────
-    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.devcontainer' &>/dev/null; then
-        local devcontainer_src="${DEVSTACK_DIR}/templates/apps/${app_type}/.devcontainer"
-        if [ -d "${devcontainer_src}" ]; then
-            log "Copying devcontainer configuration..." >&2
-            mkdir -p "${DEVSTACK_DIR}/.devcontainer"
-            cp -r "${devcontainer_src}/." "${DEVSTACK_DIR}/.devcontainer/"
-        fi
-    fi
-
-    # ── 5. Test infrastructure (if qa selected) ───────────────────────────
-    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.qa' &>/dev/null; then
-        log "Setting up test infrastructure..." >&2
-        mkdir -p "${DEVSTACK_DIR}/tests/playwright"
-        mkdir -p "${DEVSTACK_DIR}/tests/results"
-
-        if [ ! -f "${DEVSTACK_DIR}/tests/playwright/playwright.config.ts" ]; then
-            cat > "${DEVSTACK_DIR}/tests/playwright/package.json" <<'TEST_PKG'
+    # ── 13. Scaffold tests ────────────────────────────────────────────────
+    log "Scaffolding test infrastructure..." >&2
+    cat > "${dest}/tests/playwright/package.json" <<'TEST_PKG'
 {
   "name": "devstack-tests",
   "version": "1.0.0",
@@ -1517,7 +1688,7 @@ FRONTPKG
   }
 }
 TEST_PKG
-            cat > "${DEVSTACK_DIR}/tests/playwright/playwright.config.ts" <<'TEST_CFG'
+    cat > "${dest}/tests/playwright/playwright.config.ts" <<'TEST_CFG'
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
@@ -1539,14 +1710,47 @@ export default defineConfig({
     outputDir: '/results/artifacts',
 });
 TEST_CFG
+
+    # ── 14. Create app/init.sh scaffold ───────────────────────────────────
+    cat > "${dest}/app/init.sh" <<'INIT_SH'
+#!/bin/sh
+echo "[init] App initialization starting..."
+# Add your setup steps here (install deps, run migrations, seed data)
+echo "[init] Done."
+INIT_SH
+    chmod +x "${dest}/app/init.sh"
+
+    # ── 15. Create frontend/package.json (if frontend selected) ───────────
+    if [ "${frontend_type}" != "none" ]; then
+        log "Scaffolding frontend directory..." >&2
+        cat > "${dest}/frontend/package.json" <<FRONTPKG
+{
+  "name": "${project_name}-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
+FRONTPKG
+    fi
+
+    # ── 16. Devcontainer (if selected) ────────────────────────────────────
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.devcontainer' &>/dev/null; then
+        local devcontainer_src="${DEVSTACK_DIR}/templates/apps/${app_type}/.devcontainer"
+        if [ -d "${devcontainer_src}" ]; then
+            log "Copying devcontainer configuration..." >&2
+            mkdir -p "${dest}/.devcontainer"
+            cp -r "${devcontainer_src}/." "${dest}/.devcontainer/"
         fi
     fi
 
-    # ── 6. Run existing generators ────────────────────────────────────────
-    log "Running generators..." >&2
-    cmd_generate >&2 || return 1
-
-    log_ok "Environment generated successfully." >&2
+    log_ok "Product assembled in ${dest}/" >&2
     return 0
 }
 
@@ -1562,8 +1766,12 @@ build_bootstrap_response() {
         wiring_json='{}'
     fi
 
+    local project_name
+    project_name=$(printf '%s\n' "${payload}" | jq -r '.project')
+
     jq -n --argjson p "${payload}" --slurpfile m "${manifest_file}" \
-           --argjson wiring "${wiring_json}" '
+           --argjson wiring "${wiring_json}" \
+           --arg project_dir "./${project_name}" '
         $m[0] as $manifest |
 
         # Resolved services: manifest defaults merged with user overrides
@@ -1586,7 +1794,7 @@ build_bootstrap_response() {
             contract: "devstrap-result",
             version: "1",
             status: "ok",
-            project_dir: ("./\($p.project)"),
+            project_dir: $project_dir,
             services: $services,
             commands: {
                 start: "./devstack.sh start",

@@ -1,3 +1,4 @@
+services:
   dozzle:
     image: amir20/dozzle:latest
     container_name: ${PROJECT_NAME}-dozzle
@@ -6,7 +7,7 @@
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - ${PROJECT_NAME}-internal
+      - devstack-internal
     healthcheck:
       test: ["CMD", "/dozzle", "healthcheck"]
       interval: 10s
