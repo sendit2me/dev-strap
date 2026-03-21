@@ -63,6 +63,14 @@ Exit code `0`. JSON to stdout.
 {
   "contract": "devstrap-options",
   "version": "1",
+  "presets": {
+    "<preset-key>": {
+      "label": "<string>",
+      "description": "<string>",
+      "selections": { "<category-key>": ["<item-key>", "..."] },
+      "prompts": ["<category-key>"]
+    }
+  },
   "categories": {
     "<category-key>": {
       "label": "<string>",
@@ -79,7 +87,14 @@ Exit code `0`. JSON to stdout.
         }
       }
     }
-  }
+  },
+  "wiring": [
+    {
+      "when": ["<category.item | category.*>", "..."],
+      "set": "<category.item.key>",
+      "template": "<string>"
+    }
+  ]
 }
 ```
 
@@ -89,6 +104,11 @@ Exit code `0`. JSON to stdout.
 |---|---|---|---|
 | `contract` | string | yes | Always `"devstrap-options"`. PowerHouse uses this to validate it received the right payload. |
 | `version` | string | yes | Contract major version. Currently `"1"`. PowerHouse must refuse payloads with an unrecognized version. |
+| `presets` | object | no | Keyed by preset identifier. Pre-configured stack bundles for fast-start UX. PowerHouse expands a chosen preset into a full `selections` object before sending `--bootstrap`. |
+| `preset.label` | string | yes | Human-readable preset name. |
+| `preset.description` | string | yes | One-line explanation of what this preset provides. |
+| `preset.selections` | object | yes | Pre-filled selections. Keys are category identifiers, values are arrays of item identifiers. |
+| `preset.prompts` | array | no | Category keys that the preset leaves for the user to choose. If present, PowerHouse should prompt the user for these categories rather than auto-selecting. |
 | `categories` | object | yes | Keyed by category identifier. dev-strap defines these freely. |
 | `category.label` | string | yes | Human-readable category name. |
 | `category.description` | string | yes | One-line explanation of what this category represents. |
@@ -97,9 +117,13 @@ Exit code `0`. JSON to stdout.
 | `items` | object | yes | Keyed by item identifier. dev-strap defines these freely. |
 | `item.label` | string | yes | Human-readable item name. |
 | `item.description` | string | yes | One-line explanation. Enough for a user to decide yes or no. |
-| `item.defaults` | object | no | Flat key-value pairs. Values must be scalars (string, number, boolean). These serve two purposes: (1) display hints for PowerHouse (e.g. showing "port: 5432"), (2) configurable values the user may override during bootstrap. |
+| `item.defaults` | object | no | Flat key-value pairs. Values must be scalars (string, number, boolean). These serve two purposes: (1) display hints for PowerHouse (e.g. showing "port: 5432"), (2) configurable values the user may override during bootstrap. Some defaults are empty strings populated by wiring rules at bootstrap time (e.g. `redis_url`, `nats_url`). |
 | `item.requires` | array | no | List of dependency references. Format: `"category.item"` for a specific item, `"category.*"` for any item in a category. If any dependency is unmet, dev-strap will reject the bootstrap. |
 | `item.conflicts` | array | no | List of conflict references. Format: `"category.item"`. Selecting this item and a conflicting item together is invalid. |
+| `wiring` | array | no | Declarative auto-configuration rules. Each rule fires when co-selected items match its `when` conditions. Wiring is informational for PowerHouse — dev-strap applies wiring automatically during bootstrap. PowerHouse can display wiring hints to users or ignore this key entirely. |
+| `wiring[].when` | array | yes | List of references that must all be selected for this rule to fire. Same format as `requires`: `"category.item"` or `"category.*"`. |
+| `wiring[].set` | string | yes | Target to set when the rule fires. Format: `"category.item.key"`. Wildcards (e.g. `"app.*.redis_url"`) resolve to the selected item in that category. |
+| `wiring[].template` | string | yes | Value to set. May contain `{category.*.key}` placeholders that resolve to the selected item's defaults. User overrides always take precedence — if the user explicitly overrides the target key, the wiring rule is skipped. |
 
 ### Key rules
 
@@ -195,15 +219,19 @@ Exit code `0`. JSON to stdout.
   },
   "commands": {
     "<command-name>": "<string>"
+  },
+  "wiring": {
+    "<category.item.key>": "<resolved-value>"
   }
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `project_dir` | string | Relative path to the generated project directory. |
+| `project_dir` | string | Relative path to the generated product directory (e.g. `./acme-platform/`). The product is self-contained with its own `devstack.sh`; commands in `commands` reference this product-local script. |
 | `services` | object | Resolved configuration for each selected item. Includes defaults merged with any overrides. PowerHouse uses this to know final ports, paths, etc. |
-| `commands` | object | Shell commands PowerHouse can use to operate the stack. Common keys: `start`, `stop`, `test`, `logs`. dev-strap defines these freely. |
+| `commands` | object | Shell commands PowerHouse can use to operate the stack. Common keys: `start`, `stop`, `test`, `logs`. dev-strap defines these freely. Commands reference the product's `devstack.sh`, not the factory's. |
+| `wiring` | object | Present only when wiring rules fired during bootstrap. Keys are `"category.item.key"` targets, values are resolved template strings. User overrides always take precedence over wiring. |
 
 ### Failure
 
@@ -263,6 +291,27 @@ devstack.sh --options
       "description": "Backend API with database, caching, testing, and API docs",
       "selections": { "database": ["postgres"], "services": ["redis"], "tooling": ["qa", "swagger-ui"] },
       "prompts": ["app"]
+    },
+    "full-stack": {
+      "label": "Full Stack + Observability",
+      "description": "Complete development environment with frontend, backend, database, and monitoring",
+      "selections": {
+        "frontend": ["vite"],
+        "database": ["postgres"],
+        "services": ["redis"],
+        "tooling": ["qa"],
+        "observability": ["prometheus", "grafana", "dozzle"]
+      },
+      "prompts": ["app"]
+    },
+    "data-pipeline": {
+      "label": "Data Pipeline",
+      "description": "Python-based data processing with messaging and object storage",
+      "selections": {
+        "app": ["python-fastapi"],
+        "database": ["postgres"],
+        "services": ["nats", "minio"]
+      }
     }
   },
   "categories": {
@@ -275,22 +324,27 @@ devstack.sh --options
         "node-express": {
           "label": "Node.js (Express)",
           "description": "Express API with hot reload",
-          "defaults": { "port": 3000 }
+          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
+        },
+        "php-laravel": {
+          "label": "PHP (Laravel)",
+          "description": "Laravel with PHP-FPM (port 9000 is internal FastCGI, not host-exposed)",
+          "defaults": { "port": 9000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "go": {
           "label": "Go",
           "description": "Go module with Air live reload",
-          "defaults": { "port": 3000 }
+          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "python-fastapi": {
           "label": "Python (FastAPI)",
           "description": "FastAPI with uvicorn hot reload",
-          "defaults": { "port": 3000 }
+          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "rust": {
           "label": "Rust",
           "description": "Rust with cargo-watch live reload",
-          "defaults": { "port": 3000 }
+          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         }
       }
     },
@@ -383,21 +437,49 @@ devstack.sh --options
         "db-ui": {
           "label": "Database UI (Adminer)",
           "description": "Web-based database browser supporting PostgreSQL and MariaDB",
-          "defaults": { "port": 8083 },
+          "defaults": { "port": 8083, "default_server": "" },
           "requires": ["database.*"]
         },
         "swagger-ui": {
           "label": "API Documentation (Swagger UI)",
           "description": "Live OpenAPI spec viewer for running backend",
-          "defaults": { "port": 8084 },
+          "defaults": { "port": 8084, "spec_url": "" },
           "requires": ["app.*"]
+        }
+      }
+    },
+    "observability": {
+      "label": "Observability",
+      "description": "Monitoring, metrics, and log viewing",
+      "selection": "multi",
+      "required": false,
+      "items": {
+        "prometheus": {
+          "label": "Prometheus",
+          "description": "Metrics collection and time-series database",
+          "defaults": { "port": 9090 }
+        },
+        "grafana": {
+          "label": "Grafana",
+          "description": "Metrics dashboards and visualization",
+          "defaults": { "port": 3001 },
+          "requires": ["observability.prometheus"]
+        },
+        "dozzle": {
+          "label": "Dozzle",
+          "description": "Real-time Docker container log viewer",
+          "defaults": { "port": 9999 }
         }
       }
     }
   },
   "wiring": [
     { "when": ["frontend.vite", "app.*"], "set": "frontend.vite.api_base", "template": "/api" },
-    { "when": ["app.*", "services.redis"], "set": "app.*.redis_url", "template": "redis://redis:6379" }
+    { "when": ["app.*", "services.redis"], "set": "app.*.redis_url", "template": "redis://redis:6379" },
+    { "when": ["app.*", "services.nats"], "set": "app.*.nats_url", "template": "nats://nats:4222" },
+    { "when": ["app.*", "services.minio"], "set": "app.*.s3_endpoint", "template": "http://minio:9000" },
+    { "when": ["tooling.db-ui", "database.*"], "set": "tooling.db-ui.default_server", "template": "db" },
+    { "when": ["tooling.swagger-ui", "app.*"], "set": "tooling.swagger-ui.spec_url", "template": "http://app:{app.*.port}/docs/openapi.json" }
   ]
 }
 ```
@@ -448,20 +530,25 @@ devstack.sh --bootstrap --config selection.json
   "status": "ok",
   "project_dir": "./acme-platform",
   "services": {
-    "node-express": { "port": 3000 },
+    "node-express": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" },
     "vite": { "port": 5173, "api_base": "/api" },
     "postgres": { "port": 5432 },
     "redis": { "port": 6379 },
     "qa": {},
     "qa-dashboard": { "port": 8082 },
     "wiremock": { "port": 8443 },
-    "db-ui": { "port": 8083 }
+    "db-ui": { "port": 8083, "default_server": "" }
   },
   "commands": {
     "start": "./devstack.sh start",
     "stop": "./devstack.sh stop",
     "test": "./devstack.sh test",
     "logs": "./devstack.sh logs"
+  },
+  "wiring": {
+    "frontend.vite.api_base": "/api",
+    "app.node-express.redis_url": "redis://redis:6379",
+    "tooling.db-ui.default_server": "db"
   }
 }
 ```
@@ -546,18 +633,27 @@ All changes are additive. Existing PowerHouse integrations continue to work with
 
 **New categories:**
 - `frontend` (selection: single, required: false) — Frontend development servers. First item: `vite`.
+- `observability` (selection: multi, required: false) — Monitoring, metrics, and log viewing. Items: `prometheus`, `grafana`, `dozzle`.
 
 **New items in existing categories:**
-- `app`: `python-fastapi`, `rust`
+- `app`: `php-laravel`, `python-fastapi`, `rust`
 - `services`: `nats`, `minio`
 - `tooling`: `db-ui`, `swagger-ui`
 
 **Category changes:**
 - `app.selection` changed from `multi` to `single` (backend is singular now that frontend has its own category)
 
+**New defaults on existing items:**
+- All `app` items now include `redis_url`, `nats_url`, and `s3_endpoint` (empty string defaults, populated by wiring rules when related services are co-selected)
+- `tooling.db-ui` now includes `default_server` (empty string default, populated by wiring)
+- `tooling.swagger-ui` now includes `spec_url` (empty string default, populated by wiring)
+
 **New top-level keys (all optional, consumers can ignore):**
 - `presets` — Pre-configured stack bundles for fast-start UX (4 presets: spa-api, api-only, full-stack, data-pipeline)
 - `wiring` — Declarative auto-configuration rules that fire when items are co-selected (6 rules)
+
+**New field in bootstrap result:**
+- `wiring` — Optional object in success responses. Present when wiring rules fired. Shows which auto-configuration values were applied.
 
 **New validation:**
 - Check 11: `PORT_CONFLICT` — detects when two selected items default to the same port
