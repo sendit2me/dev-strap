@@ -54,27 +54,27 @@
         "node-express": {
           "label": "Node.js (Express)",
           "description": "Express API with hot reload",
-          "defaults": { "port": 3000 }
+          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "php-laravel": {
           "label": "PHP (Laravel)",
-          "description": "Laravel with PHP-FPM",
-          "defaults": { "port": 9000 }
+          "description": "Laravel with PHP-FPM (port 9000 is internal FastCGI, not host-exposed)",
+          "defaults": { "port": 9000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "go": {
           "label": "Go",
           "description": "Go module with Air live reload",
-          "defaults": { "port": 3000 }
+          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "python-fastapi": {
           "label": "Python (FastAPI)",
           "description": "FastAPI with uvicorn hot reload",
-          "defaults": { "port": 3000 }
+          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "rust": {
           "label": "Rust",
           "description": "Rust with cargo-watch live reload",
-          "defaults": { "port": 3000 }
+          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         }
       }
     },
@@ -167,13 +167,13 @@
         "db-ui": {
           "label": "Database UI (Adminer)",
           "description": "Web-based database browser supporting PostgreSQL and MariaDB",
-          "defaults": { "port": 8083 },
+          "defaults": { "port": 8083, "default_server": "" },
           "requires": ["database.*"]
         },
         "swagger-ui": {
           "label": "API Documentation (Swagger UI)",
           "description": "Live OpenAPI spec viewer for running backend",
-          "defaults": { "port": 8084 },
+          "defaults": { "port": 8084, "spec_url": "" },
           "requires": ["app.*"]
         }
       }
