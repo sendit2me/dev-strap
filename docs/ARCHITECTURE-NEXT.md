@@ -1,5 +1,7 @@
 # Architecture: Where We Are and Where We're Going
 
+> **Note**: The architectural concepts from this document have been merged into `docs/ARCHITECTURE.md`. This file is preserved as historical context -- it captures the research journey and reasoning that led to the factory/product split.
+
 > **Date**: 2026-03-20
 > **Status**: Hard-earned thinking from a full day of research, implementation, and review.
 > **Purpose**: This document captures WHY we're here, WHAT we learned, and WHERE we're going. Read this before doing any architectural work on dev-strap.

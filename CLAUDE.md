@@ -1,3 +1,10 @@
-Read `docs/AI_BOOTSTRAP.md` before doing any work on this codebase. It contains the file reading order, architecture, pitfalls, and verification steps specific to this project.
+Read `docs/AI_BOOTSTRAP.md` before doing any work on this codebase.
 
-This is a meta-tool (infrastructure generator), not an application. The key distinction: files in `.generated/` are outputs — edit the generators in `core/`, not the generated files.
+This is a meta-tool (infrastructure generator), not an application.
+Key distinction: templates in `templates/` are inputs, product files in `product/` ship to users.
+
+The system has two parts:
+- Factory (this repo): presents catalog, assembles projects
+- Product (what users get): self-contained Docker environment
+
+Do NOT edit product files to test factory changes -- bootstrap a test project instead.

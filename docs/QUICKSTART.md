@@ -1,111 +1,111 @@
-# DevStrap Quickstart
+# Getting Started
 
 ## Prerequisites
 
-- Docker (with Compose v2)
-- That's it. No language runtimes, no package managers, no tools on your machine.
+- Docker (with Compose v2.20+)
+- jq (for `--options` and `--bootstrap` contract)
 
-## Try the included example (2 minutes)
+That's it. No language runtimes, no package managers.
 
-DevStrap ships with a working Node.js example app that calls two mocked external APIs.
-
-```bash
-cd dev-strap/
-./devstack.sh start
-```
-
-Once running:
-
-| URL | What |
-|-----|------|
-| http://localhost:8080 | Example app with links to try each mock pattern |
-| https://localhost:8443 | Same app over HTTPS |
-| http://localhost:8082 | Test results dashboard |
-
-Run the tests:
-
-```bash
-./devstack.sh test
-```
-
-All 6 tests should pass. View the HTML report at `http://localhost:8082`.
-
-Tear it all down:
-
-```bash
-./devstack.sh stop
-```
-
-Everything is removed — containers, volumes, generated config, test results. Next `start` is a clean slate.
-
-## Set up your own project
-
-### Option A: Use a preset
+## Init with a preset
 
 Presets give you a curated stack in one step:
 
 ```bash
-./devstack.sh init --preset full-stack    # Vite + API + DB + Redis + monitoring
-./devstack.sh init --preset spa-api       # Vite + API + DB + QA + mocking
-./devstack.sh init --preset api-only      # API + DB + Redis + Swagger UI
-./devstack.sh init --preset data-pipeline # Python + DB + NATS + MinIO
+./devstack.sh init --preset spa-api        # Vite + API + DB + QA + mocking
+./devstack.sh init --preset api-only       # API + DB + Redis + Swagger UI
+./devstack.sh init --preset full-stack     # Vite + API + DB + Redis + monitoring
+./devstack.sh init --preset data-pipeline  # Python + DB + NATS + MinIO
 ```
 
-The wizard will prompt for your app type (Node.js, PHP, Go, Python, or Rust) and project name, then generate everything.
+The wizard prompts for your app type (Node.js, PHP, Go, Python, or Rust) and project name.
 
-### Option B: Interactive wizard
+## Init interactively
 
 ```bash
 ./devstack.sh init
 ```
 
-Walk through each choice: app template, frontend (Vite), database, services (Redis, Mailpit, NATS, MinIO), tooling, and observability.
+Walk through each category: app template, frontend, database, services, tooling, and observability.
 
-### Option C: Manual configuration
+## What you get
 
-See [PROJECT_SETUP.md](PROJECT_SETUP.md) for the full walkthrough.
+After init, you have a self-contained project directory:
 
-## CLI Reference
-
-```bash
-# Stack
-./devstack.sh start                       # Generate config, build, start all containers
-./devstack.sh stop                        # Tear down everything (clean slate)
-./devstack.sh restart                     # Stop, then start (clean rebuild)
-./devstack.sh status                      # Show all containers and their health
-./devstack.sh logs                        # Tail all container logs
-./devstack.sh logs app                    # Tail a single service's logs
-./devstack.sh shell                       # Shell into the app container
-./devstack.sh shell db                    # Shell into any container by service name
-
-# Testing
-./devstack.sh test                        # Run all Playwright tests in container
-./devstack.sh test "login"                # Run tests matching a grep filter
-
-# Mocks
-./devstack.sh mocks                       # List configured mock services and mappings
-./devstack.sh new-mock stripe api.stripe.com  # Scaffold a new mock service
-./devstack.sh reload-mocks                # Hot-reload mappings (no restart needed)
-./devstack.sh record stripe               # Record real API responses as mock mappings
-./devstack.sh apply-recording stripe      # Apply recorded mappings into mock
-./devstack.sh verify-mocks                # Check all mocked domains work
-
-# Config
-./devstack.sh init                        # Interactive project setup wizard
-./devstack.sh generate                    # Regenerate config without starting
-./devstack.sh help                        # Show help
+```
+my-project/
+├── docker-compose.yml          # include directives for services/
+├── services/
+│   ├── cert-gen.yml            # TLS certificate generation
+│   ├── app.yml                 # your chosen backend
+│   ├── caddy.yml               # generated at start (reverse proxy)
+│   ├── database.yml            # if selected
+│   ├── redis.yml               # if selected
+│   └── ...                     # one file per selected service
+├── app/
+│   ├── Dockerfile
+│   └── src/                    # your application code goes here
+├── mocks/                      # mock service definitions
+├── tests/playwright/           # test specs
+├── project.env                 # all configuration
+└── devstack.sh                 # runtime CLI
 ```
 
-## Where to go next
+`ls services/` shows your stack. The project has no dependency on dev-strap.
+
+## Start your project
+
+```bash
+cd my-project/
+./devstack.sh start
+```
+
+Open `http://localhost:8080`. Your stack is running.
+
+## Common commands
+
+```bash
+# Stack lifecycle
+./devstack.sh start                       # Build and start
+./devstack.sh stop                        # Stop (volumes preserved)
+./devstack.sh stop --clean                # Stop and remove everything
+./devstack.sh restart                     # Restart (volumes preserved)
+./devstack.sh status                      # Container health
+./devstack.sh logs [service]              # Tail logs
+./devstack.sh shell [service]             # Shell into a container
+
+# Testing
+./devstack.sh test                        # Run Playwright tests
+./devstack.sh test "login"                # Run tests matching a filter
+
+# Mocks
+./devstack.sh mocks                       # List configured mocks
+./devstack.sh new-mock stripe api.stripe.com  # Scaffold a new mock
+./devstack.sh reload-mocks                # Hot-reload mappings (no restart)
+./devstack.sh record stripe               # Record real API responses
+./devstack.sh apply-recording stripe      # Apply recordings as mocks
+./devstack.sh verify-mocks                # Verify mock DNS interception
+```
+
+## PowerHouse integration
+
+DevStrap implements the PowerHouse contract:
+
+```bash
+# Get catalog (returns manifest.json)
+./devstack.sh --options
+
+# Bootstrap from JSON payload
+./devstack.sh --bootstrap '{"project":"myapp","selections":{"app":{"go":{}}}}'
+```
+
+See `DEVSTRAP-POWERHOUSE-CONTRACT.md` for the full contract specification.
+
+## Next steps
 
 | I want to... | Read |
 |---------------|------|
-| Set up my own project from scratch | [PROJECT_SETUP.md](PROJECT_SETUP.md) |
-| Mock an external API | [ADDING_MOCKS.md](ADDING_MOCKS.md) |
-| Record real API responses as mocks | [ADDING_MOCKS.md](ADDING_MOCKS.md#recording-real-api-responses) |
-| Add a service (Redis, NATS, MinIO, Mailpit) | [ADDING_SERVICES.md](ADDING_SERVICES.md) |
-| Write and run tests | [TESTING.md](TESTING.md) |
-| Set up VS Code dev containers | [DEVELOPMENT.md](DEVELOPMENT.md) |
+| Add a service to the catalog | [ADDING_SERVICES.md](ADDING_SERVICES.md) |
 | Create a new app template | [CREATING_TEMPLATES.md](CREATING_TEMPLATES.md) |
-| Understand how it all works | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| Debug something that isn't working | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
+| Understand the architecture | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Contribute to the factory | [DEVELOPMENT.md](DEVELOPMENT.md) |

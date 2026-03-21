@@ -1,260 +1,182 @@
-# AI Agent Bootstrap
+# AI Agent Bootstrap (Factory)
 
-This document is written for AI coding agents (Claude Code, Cursor, Copilot, etc.) starting a new session on this codebase. Read this first.
+This document is for AI agents working on the dev-strap **factory** -- the tool that generates Docker development environments.
 
 ## What this project is
 
-DevStrap is a **meta-tool** — it generates Docker infrastructure, not application code. It's a bootstrap system for containerized development environments with transparent HTTPS mock interception.
+DevStrap is a factory. It takes a catalog of services and user selections, then assembles a self-contained project directory with Docker Compose, templates, and a lightweight runtime CLI.
 
 It is NOT:
 - A web application
-- A library or package
 - A Docker image
+- Something users run directly after bootstrap
 
 It IS:
-- A set of bash scripts that generate `docker-compose.yml`, `Caddyfile`, and TLS certificates from a directory structure
-- Templates for different app types (Node, PHP, Go)
-- WireMock JSON stubs for mocking external APIs
-- A CLI (`devstack.sh`) that orchestrates everything
+- A set of bash scripts that assemble Docker infrastructure from templates
+- A catalog of service definitions (`contract/manifest.json`)
+- A CLI (`devstack.sh`) that handles discovery, validation, and assembly
 
-## Critical: source-of-truth vs generated
+## The two systems
 
 ```
-SOURCE (edit these)                    GENERATED (never edit these)
-─────────────────                      ──────────────────────────
-project.env                            .generated/docker-compose.yml
-mocks/*/domains                        .generated/Caddyfile
-mocks/*/mappings/*.json                .generated/domains.txt
-mocks/*/__files/*
-templates/apps/*/service.yml
-templates/apps/*/Dockerfile
-templates/databases/*/service.yml
-templates/extras/*/service.yml
-core/certs/generate.sh
-core/caddy/generate-caddyfile.sh
-core/compose/generate.sh
-devstack.sh
-app/                                   tests/results/
-tests/playwright/*.spec.ts             tests/playwright/node_modules/
+FACTORY (this repo)                    PRODUCT (user's project)
+-----------------------                -------------------------
+When: before choices are made          When: after choices are made
+Job: present catalog, assemble         Job: start, stop, test, develop
+
+Contains:                              Contains:
+  contract/manifest.json                 docker-compose.yml (include directives)
+  templates/apps/*/                      services/app.yml (the chosen one)
+  templates/frontends/*/                 services/database.yml (if chosen)
+  templates/databases/*/                 services/redis.yml (if chosen)
+  templates/extras/*/                    services/caddy.yml (generated at start)
+  templates/common/*/                    services/wiremock.yml (generated at start)
+  product/devstack.sh                    devstack.sh (lightweight runtime)
+  product/certs/generate.sh              certs/generate.sh
+  core/caddy/generate-caddyfile.sh       caddy/Caddyfile (generated at start)
+  devstack.sh (full factory CLI)         project.env
 ```
 
-`.generated/` is deleted on `./devstack.sh stop` and rebuilt on `./devstack.sh start`. Never edit files there. If you need to change what's generated, edit the generator script in `core/`.
+The boundary is the **bootstrap moment**. Everything before = factory. Everything after = product.
+
+## Critical: source-of-truth
+
+```
+SOURCE (edit these):                   PRODUCT (generated output):
+  contract/manifest.json                 <project>/docker-compose.yml
+  templates/apps/*/service.yml           <project>/services/app.yml
+  templates/frontends/*/service.yml      <project>/services/frontend.yml
+  templates/databases/*/service.yml      <project>/services/database.yml
+  templates/extras/*/service.yml         <project>/services/<extra>.yml
+  templates/common/*.yml                 <project>/services/cert-gen.yml etc
+  product/devstack.sh                    <project>/devstack.sh
+  product/certs/generate.sh              <project>/certs/generate.sh
+  core/caddy/generate-caddyfile.sh       (logic reused in product's devstack.sh)
+  devstack.sh                            (factory CLI, not shipped)
+```
 
 ## File reading order
 
-When starting work, read these files in this order:
+When starting work, read in this order:
 
-1. **`project.env`** — current configuration (app type, database, ports, extras)
-2. **`devstack.sh`** — the CLI, all commands, the orchestration flow
-3. **`core/compose/generate.sh`** — how docker-compose.yml is assembled
-4. **`core/caddy/generate-caddyfile.sh`** — how Caddyfile is assembled
-5. **`core/certs/generate.sh`** — how certificates are generated
-6. **`templates/apps/{APP_TYPE}/service.yml`** — the active app template (check APP_TYPE in project.env)
+1. `contract/manifest.json` -- the catalog (categories, items, presets, wiring rules)
+2. `devstack.sh` -- the factory CLI, focus on `generate_from_bootstrap()` and `cmd_init()`
+3. `product/devstack.sh` -- the product runtime CLI (start/stop/test/mocks)
+4. `templates/` -- service definitions (standalone compose fragments with `services:` key)
+5. `core/caddy/generate-caddyfile.sh` -- Caddyfile generation logic
 
-Only read further if your task requires it. Don't read all docs upfront — they're for humans.
+Only read further if your task requires it.
 
-## How changes flow
+## How assembly works
 
-```
-You edit a file
-       │
-       ├── project.env or templates/*
-       │     └── ./devstack.sh restart  (regenerates everything)
-       │
-       ├── mocks/*/mappings/*.json (existing mock, existing domain)
-       │     └── ./devstack.sh reload-mocks  (hot reload, no restart)
-       │
-       ├── mocks/*/domains (new domain)
-       │     └── ./devstack.sh restart  (needs new certs + Caddy config)
-       │
-       ├── app/src/* (application code)
-       │     └── Nothing — file watcher in container picks it up
-       │
-       ├── core/*.sh (generator scripts)
-       │     └── ./devstack.sh restart  (regenerates from changed scripts)
-       │
-       ├── devstack.sh (CLI itself)
-       │     └── Takes effect on next command invocation
-       │
-       └── tests/playwright/*.spec.ts
-              └── ./devstack.sh test  (runs immediately)
-```
+`generate_from_bootstrap()` takes a validated JSON payload and:
 
-## How to verify changes
+1. Extracts selections (app, database, frontend, extras)
+2. Creates the product directory structure (`services/`, `caddy/`, `certs/`, `app/`, `mocks/`, `tests/`)
+3. Copies `product/devstack.sh` (the runtime CLI)
+4. Copies common templates (`cert-gen.yml`, `tester.yml`, `test-dashboard.yml`)
+5. Copies selected templates (app, database, frontend, extras)
+6. Writes `project.env` with all configuration and port assignments
+7. Resolves auto-wiring rules and appends to `project.env`
+8. Assembles `docker-compose.yml` with `include` directives for each service
+9. Scaffolds mock examples (if WireMock selected) and test infrastructure
 
-After ANY code change, this is the verification loop:
+## How the product works
 
-```bash
-# If you changed generators, templates, or project.env:
-./devstack.sh stop && ./devstack.sh start
+The product uses Docker Compose `include` -- the root `docker-compose.yml` lists service files:
 
-# If you changed mock mappings only:
-./devstack.sh reload-mocks
-
-# Always run tests:
-./devstack.sh test
-
-# Check specific things:
-./devstack.sh status          # container health
-./devstack.sh verify-mocks    # mock domain reachability
-./devstack.sh mocks           # list what's configured
-
-# Debug:
-./devstack.sh logs web        # proxy routing issues
-./devstack.sh logs wiremock   # mock matching issues
-./devstack.sh logs app        # application errors
-./devstack.sh shell app       # interactive debugging
+```yaml
+include:
+  - path: services/cert-gen.yml
+    project_directory: .
+  - path: services/app.yml
+    project_directory: .
+  - path: services/caddy.yml
+    project_directory: .
+  # ... one entry per selected service
 ```
 
-Tests must pass. If they don't, the change is broken. Don't skip this.
+Each service file is a standalone compose fragment with a `services:` top-level key. `ls services/` shows the stack.
 
-## Architecture in 30 seconds
-
-```
-App makes HTTPS request to api.stripe.com
-  → Docker DNS resolves api.stripe.com to Caddy (network alias in docker-compose)
-  → Caddy terminates TLS (cert has SAN for api.stripe.com)
-  → Caddy adds X-Original-Host: api.stripe.com header
-  → Caddy proxies to WireMock (http://wiremock:8080)
-  → WireMock matches against mocks/stripe/mappings/*.json
-  → Returns stub response
-  → App receives it as if Stripe replied
-```
-
-The app code is identical in dev and production. No `isDev` flags anywhere.
-
-## Generation pipeline
-
-```
-mocks/*/domains  ──→  .generated/domains.txt  ──→  cert-gen container (SANs)
-                 ──→  Caddy site blocks
-                 ──→  docker-compose network aliases
-
-project.env      ──→  selects templates/apps/{APP_TYPE}/
-                 ──→  selects templates/databases/{DB_TYPE}/
-                 ──→  derives DB_PORT from DB_TYPE (mariadb=3306, postgres=5432)
-
-templates/       ──→  variable substitution (${PROJECT_NAME}, ${DB_PORT}, etc.)
-                 ──→  assembled into .generated/docker-compose.yml
-```
+At start time, the product's `devstack.sh`:
+1. Collects mock domains from `mocks/*/domains`
+2. Generates `caddy/Caddyfile` and `services/caddy.yml` (dynamic, depends on mock domains)
+3. Generates `services/wiremock.yml` (dynamic, depends on mock mappings)
+4. Runs `docker compose up`
 
 ## Variable substitution
 
-Templates use `${VARIABLE}` placeholders. The compose generator (`core/compose/generate.sh`) replaces them via `sed`. Available variables:
+Templates use `${VAR}` placeholders. Docker Compose resolves these from `project.env` (symlinked as `.env`) at runtime. This is native compose interpolation -- no sed, no envsubst.
+
+**Exception**: top-level YAML keys like volume names and network names must be **literal** (e.g., `devstack-certs`, not `${PROJECT_NAME}-certs`). Docker Compose does not interpolate variables in top-level key positions.
+
+Common variables:
 
 | Variable | Source | Example |
 |----------|--------|---------|
 | `${PROJECT_NAME}` | project.env | `myproject` |
-| `${APP_SOURCE}` | Resolved to absolute path | `/home/user/devstack/app` |
-| `${DB_TYPE}` | project.env | `mariadb` |
-| `${DB_PORT}` | Derived from DB_TYPE | `3306` |
+| `${APP_SOURCE}` | project.env | `./app` |
+| `${DB_TYPE}` | project.env | `postgres` |
+| `${DB_PORT}` | Derived from DB_TYPE | `5432` |
 | `${DB_NAME}` | project.env | `myproject` |
-| `${DB_USER}` | project.env | `myproject` |
-| `${DB_PASSWORD}` | project.env | `secret` |
-| `${DB_ROOT_PASSWORD}` | project.env | `root` |
-| `${MAILPIT_PORT}` | project.env (default 8025) | `8025` |
+| `${HTTP_PORT}` | project.env | `8080` |
+| `${HTTPS_PORT}` | project.env | `8443` |
 
-## Pitfalls that waste your time
+## Pitfalls
 
-### 1. Editing .generated/ files
-They get deleted on stop and overwritten on start. Edit the generators or templates instead.
+### 1. Factory vs product confusion
+The factory (`devstack.sh` at repo root) and product (`product/devstack.sh`) are different scripts. Do not edit the product to test factory logic -- bootstrap a test project instead.
 
-### 2. Docker build context paths
-The compose file lives in `.generated/` but references files elsewhere. All paths in the generated compose are absolute. If you add a new volume mount in a template, use `${APP_SOURCE}` (absolute) not `./app` (relative to compose file location).
+### 2. Templates must have `services:` wrapper
+Every template in `templates/` must have a `services:` top-level key. Docker Compose `include` requires this.
 
-### 3. Root-owned files from containers
-Containers write files as root. `tests/results/`, `tests/playwright/node_modules/`, and recorded mock files are root-owned. `./devstack.sh stop` handles cleanup using a Docker container (`alpine rm -rf`). If you need to clean manually:
-```bash
-docker run --rm -v $(pwd)/tests:/data alpine rm -rf /data/results/* /data/playwright/node_modules
-```
+### 3. Volume and network names are literal
+In templates, volume and network names must be literal strings like `devstack-certs` and `devstack-internal`. Docker Compose does not interpolate variables in YAML key positions.
 
 ### 4. CA certificate trust differs by language
-The mock interception requires the app to trust a self-signed CA at `/certs/ca.crt`. Each language handles this differently:
-- **Node.js**: `NODE_EXTRA_CA_CERTS=/certs/ca.crt` env var (set in service.yml)
-- **Go**: `SSL_CERT_FILE=/certs/ca.crt` env var (set in service.yml)
-- **PHP**: Entrypoint wrapper in Dockerfile runs `update-ca-certificates` at container start
-- **CLI tools** (wget, curl inside containers): Must use `--no-check-certificate` or `-k`
+Mock interception requires the app to trust the self-signed CA at `/certs/ca.crt`:
+- **Node.js**: `NODE_EXTRA_CA_CERTS=/certs/ca.crt`
+- **Go / Rust**: `SSL_CERT_FILE=/certs/ca.crt`
+- **Python**: `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`
+- **PHP**: `update-ca-certificates` in init script
 
-### 5. Playwright version must match container image
-`tests/playwright/package.json` pins `@playwright/test` to `1.52.0`. The compose generator uses `mcr.microsoft.com/playwright:v1.52.0-noble`. If you change one, change both. Mismatch = "Executable doesn't exist" error.
+### 5. Caddy and WireMock service files are generated at runtime
+`services/caddy.yml` and `services/wiremock.yml` are generated by the product's `devstack.sh` at start time because they depend on mock domain configuration. Do not include static versions of these in templates.
 
-### 6. WireMock shares all mocks in one instance
-All `mocks/*/mappings/` directories are mounted into a single WireMock. If two APIs use the same path (e.g., both have `POST /v1/tokens`), WireMock can't distinguish them unless mappings include:
-```json
-"headers": { "X-Original-Host": { "equalTo": "api.stripe.com" } }
-```
-Caddy adds `X-Original-Host` automatically. Only needed when paths collide across different mocked services.
+### 6. Root-owned files from containers
+Containers write files as root. Test results, node_modules, and recorded mock files may be root-owned. The product's `devstack.sh stop --clean` handles cleanup.
 
-### 7. New domains require restart, mapping changes don't
-- Changed a JSON mapping → `./devstack.sh reload-mocks`
-- Added a new `mocks/<name>/domains` file → `./devstack.sh restart` (needs new cert SANs + Caddy config + DNS alias)
+### 7. Playwright version must match container image
+`tests/playwright/package.json` pins `@playwright/test` to a specific version. The tester template uses a matching Playwright Docker image. Mismatched versions cause "Executable doesn't exist" errors.
 
-### 8. The init script runs via stdin pipe
-`devstack.sh` pipes the init script into the container: `exec -T app sh < init.sh`. This means:
-- The script runs in the container's working directory (not the host)
-- It works regardless of where the app is mounted (`/app`, `/var/www/html`, etc.)
-- Interactive commands won't work (no TTY)
+### 8. Port convention
+Caddy routes to `app:3000` for all app types except PHP-FPM, which uses `php_fastcgi app:9000`. Make new templates listen on port 3000.
 
-### 9. Named volumes must be prefixed with ${PROJECT_NAME}
-Docker Compose scopes volume cleanup to the project. Unprefixed volumes (like `go-modules`) won't be cleaned up on `./devstack.sh stop`. Always use `${PROJECT_NAME}-go-modules`.
-
-### 10. Don't "improve" the test-dashboard
-It's intentionally a `busybox httpd` — the simplest possible static file server. Don't replace it with something "better". Its job is serving HTML test reports, nothing more.
-
-## Commands reference
+## How to verify changes
 
 ```bash
-# Lifecycle
-./devstack.sh start                       # Generate + build + start
-./devstack.sh stop                        # Tear down everything
-./devstack.sh restart                     # stop + start
+# Run contract tests (fast, no Docker needed for most)
+bash tests/contract/test-contract.sh
 
-# Observability
-./devstack.sh status                      # Container health
-./devstack.sh logs [service]              # Tail logs
-./devstack.sh shell [service]             # Shell into container
-./devstack.sh verify-mocks                # Check mock domains reachable
+# Test a template change: bootstrap a project and inspect
+./devstack.sh --bootstrap '{"project":"test","selections":{"app":{"go":{}}}}'
+ls test/services/
 
-# Testing
-./devstack.sh test [grep-filter]          # Run Playwright in container
-
-# Mocks
-./devstack.sh mocks                       # List configured mocks
-./devstack.sh new-mock <name> <domain>    # Scaffold mock directory
-./devstack.sh reload-mocks                # Hot-reload WireMock mappings
-./devstack.sh record <mock-name>          # Proxy real API, capture responses
-./devstack.sh apply-recording <mock-name> # Copy recordings into mock
-
-# Setup
-./devstack.sh init                        # Interactive project scaffold
-./devstack.sh generate                    # Regenerate config (dry run)
+# Full integration: bootstrap + start + test
+cd test/ && ./devstack.sh start && ./devstack.sh test
 ```
 
-## When adding a new feature to devstack.sh
+## When adding a factory feature
 
-1. Add the function (`cmd_your_feature`)
+1. Add logic in `devstack.sh`
 2. Add to the `case` statement in `main()`
-3. Add to the help text (keep the category grouping)
-4. Update `README.md` commands table
-5. Update `docs/QUICKSTART.md` CLI reference
-6. Run `./devstack.sh help` to verify formatting
-7. Run `./devstack.sh test` to verify nothing broke
+3. Update help text
+4. Run `bash tests/contract/test-contract.sh`
+5. Bootstrap a test project to verify output
 
-## When modifying a generator script
+## When modifying a template
 
-1. Make the change in `core/*/generate.sh`
-2. Run `./devstack.sh generate` to inspect output in `.generated/`
-3. Run `docker compose -f .generated/docker-compose.yml config --quiet` to validate YAML
-4. Run `./devstack.sh stop && ./devstack.sh start` to test the full flow
-5. Run `./devstack.sh test` — all 6 tests must pass
-
-## When adding a new template variable
-
-1. Add it to `project.env` with a default value
-2. Add a `sed` substitution in `core/compose/generate.sh` (in the relevant template section)
-3. Use `${VARIABLE}` in the template file
-4. Document it in the variable table in `docs/CREATING_TEMPLATES.md`
-
-## Open tasks
-
-See `docs/TODO.md` for deferred work items (CI/CD integration, etc.).
+1. Edit the template in `templates/`
+2. Bootstrap a test project: `./devstack.sh --bootstrap '...'`
+3. Inspect the product output in the test project directory
+4. Start the test project and verify: `cd test/ && ./devstack.sh start`

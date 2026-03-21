@@ -1,137 +1,47 @@
 # DevStrap
 
-A container-first development environment where external APIs are transparently mocked at the network layer. No `isDev` flags. No code changes between dev and production. Just Docker.
+A meta-tool that generates self-contained Docker development environments.
 
-## The Problem
+## What it does
 
-Your app calls Stripe, OpenAI, Twilio, SendGrid. In development, you need:
-- Mock responses without real API keys or costs
-- Every team member to get identical, reproducible results
-- Tests that prove the integration works, with screenshots
-- Zero setup beyond `git clone` and `docker`
-
-The usual approach — `if (process.env.NODE_ENV === 'development')` — litters your codebase with conditional paths that don't exist in production. When you go live, you're running code paths that were never tested.
-
-## The Solution
-
-DevStrap intercepts HTTPS at the network layer:
+DevStrap is a **factory**. It presents a catalog of services, takes your selections, and assembles a self-contained project directory. After bootstrap, your project has no dependency on dev-strap.
 
 ```
-Your app → HTTPS to api.stripe.com
-         → Docker DNS resolves to Caddy (network alias)
-         → Caddy terminates TLS with auto-generated cert
-         → Caddy proxies to WireMock
-         → WireMock returns mock response
-         → Your app gets a response as if Stripe replied
+dev-strap (factory)                      your-project/ (product)
+  catalog + templates                      docker-compose.yml
+  + your selections                        services/*.yml
+  ──────────────────▶                      project.env
+  assembly                                 devstack.sh (lightweight runtime)
+                                           app/, mocks/, tests/
 ```
-
-Your application code is byte-for-byte identical in dev and production. The interception happens in infrastructure, not in code.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/sendit2me/dev-strap.git
-cd dev-strap
-./devstack.sh start
+# With a preset
+./devstack.sh init --preset spa-api
+
+# Interactive wizard
+./devstack.sh init
+
+# PowerHouse integration
+./devstack.sh --bootstrap '{"project":"myapp","selections":{...}}'
 ```
 
-Open http://localhost:8080 — the example app calls two mocked APIs demonstrating simple, stateful, and conditional mock patterns.
+The output is a self-contained directory. `cd` into it and run `./devstack.sh start`.
 
-```bash
-./devstack.sh test       # Run Playwright tests in container (6/6 pass)
-./devstack.sh mocks      # List what's mocked
-./devstack.sh shell      # Drop into the app container
-./devstack.sh stop       # Tear down everything (clean slate)
-```
+## The Catalog
 
-## How Mocking Works
+| Category | Selection | Required | Items |
+|----------|-----------|----------|-------|
+| **App** | single | yes | `node-express`, `php-laravel`, `go`, `python-fastapi`, `rust` |
+| **Frontend** | single | no | `vite` |
+| **Database** | single | no | `postgres`, `mariadb` |
+| **Services** | multi | no | `redis`, `mailpit`, `nats`, `minio` |
+| **Tooling** | multi | no | `qa`, `qa-dashboard`, `wiremock`, `devcontainer`, `db-ui`, `swagger-ui` |
+| **Observability** | multi | no | `prometheus`, `grafana`, `dozzle` |
 
-Mock services are directories:
-
-```
-mocks/
-├── stripe/
-│   ├── domains              # "api.stripe.com" — one domain per line
-│   └── mappings/
-│       └── create-charge.json   # WireMock JSON stub
-└── openai/
-    ├── domains              # "api.openai.com"
-    └── mappings/
-        ├── chat.json
-        └── chat-stream.json
-```
-
-`ls mocks/` shows what's mocked. Adding a mock:
-
-```bash
-mkdir -p mocks/twilio/mappings
-echo "api.twilio.com" > mocks/twilio/domains
-# Add WireMock JSON mappings, then:
-./devstack.sh restart
-```
-
-Certificates, Caddy routing, and DNS aliases are auto-generated from the directory structure.
-
-## Architecture
-
-```
-┌─── Docker Network ───────────────────────────────────────────────┐
-│                                                                   │
-│  [App] ──HTTPS──▶ [Caddy] ──proxy──▶ [WireMock]                 │
-│    │              (DNS aliases:       (JSON stubs,                │
-│    │               api.stripe.com     stateful scenarios,         │
-│    │               api.openai.com)    conditional logic)          │
-│    │                                                              │
-│    ├──▶ [DB] (PostgreSQL / MariaDB)                              │
-│    ├──▶ [Redis]          ├──▶ [NATS]                             │
-│    ├──▶ [Mailpit]        └──▶ [MinIO]                            │
-│    │                                                              │
-│  [Frontend] ─── Vite dev server (HMR, API proxy via Caddy)       │
-│  [QA] ─── Playwright test runner in container                    │
-│  [QA Dashboard] ─── Test reports at localhost:8082               │
-│  [Adminer] ─── Database browser at localhost:8083                │
-│  [Swagger UI] ─── API docs at localhost:8084                     │
-│  [Prometheus + Grafana] ─── Metrics and dashboards               │
-│  [Dozzle] ─── Real-time container log viewer                     │
-│  [Cert-gen] ─── Auto-generates CA + server certs                │
-└───────────────────────────────────────────────────────────────────┘
-```
-
-## What You Need
-
-- Docker (with Compose v2)
-- That's it. No language runtimes. No package managers. No tools.
-
-## Configuration
-
-Everything is in `project.env`:
-
-```env
-PROJECT_NAME=my-app
-APP_TYPE=node-express    # or php-laravel, go, python-fastapi, rust
-APP_SOURCE=./app
-DB_TYPE=postgres         # or mariadb, none
-EXTRAS=redis,mailpit
-HTTP_PORT=8080
-```
-
-Or use a preset to get a curated stack in one step:
-
-```bash
-./devstack.sh init --preset full-stack
-```
-
-## Mock Patterns
-
-DevStrap includes working examples of three WireMock patterns:
-
-- **Simple** — fixed request/response pairs
-- **Stateful** — responses change across sequential calls (pending → processing → complete)
-- **Conditional** — different responses based on request body (amount >= 10000 → requires_review)
-
-## Catalog
-
-### App Templates
+### App templates
 
 | Template | Language | Live Reload | Port |
 |----------|----------|-------------|------|
@@ -140,12 +50,6 @@ DevStrap includes working examples of three WireMock patterns:
 | `go` | Go 1.24 | Air (file watcher) | 3000 |
 | `python-fastapi` | Python (FastAPI) | uvicorn hot reload | 3000 |
 | `rust` | Rust | cargo-watch | 3000 |
-
-### Frontend
-
-| Component | Description | Port |
-|-----------|-------------|------|
-| `vite` | Vite dev server with HMR, path-based API routing through Caddy | 5173 |
 
 ### Databases
 
@@ -167,10 +71,10 @@ DevStrap includes working examples of three WireMock patterns:
 
 | Component | Description | Port |
 |-----------|-------------|------|
-| `qa` | Playwright test runner (isolated container) | — |
+| `qa` | Playwright test runner (isolated container) | -- |
 | `qa-dashboard` | Web UI for test results | 8082 |
 | `wiremock` | API mocking with hot-reload definitions | 8443 |
-| `devcontainer` | VS Code dev container config | — |
+| `devcontainer` | VS Code dev container config | -- |
 | `db-ui` | Adminer database browser | 8083 |
 | `swagger-ui` | Live OpenAPI spec viewer | 8084 |
 
@@ -182,9 +86,7 @@ DevStrap includes working examples of three WireMock patterns:
 | `grafana` | Metrics dashboards and visualization | 3001 |
 | `dozzle` | Real-time Docker container log viewer | 9999 |
 
-### Preset Bundles
-
-Presets select a curated combination of components for common scenarios:
+### Preset bundles
 
 | Preset | What you get |
 |--------|-------------|
@@ -195,46 +97,97 @@ Presets select a curated combination of components for common scenarios:
 
 ### Auto-wiring
 
-Services auto-configure when co-selected. For example, selecting Redis alongside an app template automatically sets `REDIS_URL` in the app's environment. Similarly, NATS sets `NATS_URL`, MinIO sets `S3_ENDPOINT`, and Swagger UI points at the app's OpenAPI spec.
+When services are co-selected, connection variables are automatically set:
 
-## Commands
+| Condition | Variable set |
+|-----------|-------------|
+| app + Redis | `REDIS_URL=redis://redis:6379` |
+| app + NATS | `NATS_URL=nats://nats:4222` |
+| app + MinIO | `S3_ENDPOINT=http://minio:9000` |
+| Vite + app | `FRONTEND_API_PREFIX=/api` |
+| db-ui + database | `DEFAULT_SERVER=db` |
+| swagger-ui + app | `SPEC_URL=http://app:{port}/docs/openapi.json` |
+
+## How It Works
+
+### Factory assembles, product runs
+
+The factory (this repo) does its job at bootstrap time:
+
+1. **Discovery** -- PowerHouse calls `--options`, gets the catalog from `contract/manifest.json`
+2. **Selection** -- user picks their stack (interactive, preset, or JSON payload)
+3. **Validation** -- payload is validated against the manifest (dependencies, conflicts, port collisions)
+4. **Assembly** -- factory copies the right templates into a product directory, writes `project.env`, assembles `docker-compose.yml` with `include` directives
+5. **Done** -- the factory's job is complete
+
+The product (user's project) is self-contained:
+
+- `docker-compose.yml` uses `include` to pull in `services/*.yml`
+- `ls services/` shows your stack
+- `devstack.sh` is a lightweight runtime (start/stop/test/logs/mocks)
+- No dependency on the factory after bootstrap
+
+### What you get
 
 ```
-./devstack.sh start              Build and start the full stack
-./devstack.sh stop               Tear down everything (clean slate)
-./devstack.sh restart             Stop and start (clean rebuild)
-./devstack.sh test [filter]      Run Playwright tests in container
-./devstack.sh shell [service]    Shell into a container
-./devstack.sh status             Show container health
-./devstack.sh logs [service]     Tail logs
-./devstack.sh mocks              List configured mock services
-./devstack.sh reload-mocks       Hot-reload mock mappings (no restart)
-./devstack.sh new-mock <name> <domain>  Scaffold a new mock service
-./devstack.sh record <mock>      Record real API responses as mock mappings
-./devstack.sh apply-recording <mock>  Apply recorded mappings (with path fixup)
-./devstack.sh verify-mocks           Check all mocked domains are reachable
-./devstack.sh init                   Interactive project setup wizard
-./devstack.sh generate               Regenerate config without starting
+my-project/
+├── docker-compose.yml          # include directives for services/
+├── services/
+│   ├── cert-gen.yml            # TLS certificate generation
+│   ├── app.yml                 # your chosen backend
+│   ├── caddy.yml               # generated at runtime (reverse proxy)
+│   ├── database.yml            # your chosen database (if selected)
+│   ├── frontend.yml            # Vite dev server (if selected)
+│   ├── redis.yml               # only if selected
+│   └── wiremock.yml            # generated at runtime (if mocks exist)
+├── caddy/
+│   └── Caddyfile               # generated at runtime from mocks/*/domains
+├── certs/
+│   └── generate.sh             # certificate generation script
+├── app/
+│   ├── Dockerfile              # from your chosen template
+│   └── src/                    # your application code
+├── mocks/                      # mock service definitions
+├── tests/
+│   └── playwright/             # test specs
+├── project.env                 # all configuration
+└── devstack.sh                 # runtime CLI (start/stop/test/logs/mocks)
 ```
 
-## Documentation
+### Mock interception
+
+Your app makes real HTTPS requests. Docker DNS + Caddy + WireMock intercept them transparently:
+
+```
+App calls https://api.stripe.com/v1/charges
+  -> Docker DNS resolves api.stripe.com to Caddy (network alias)
+  -> Caddy terminates TLS, proxies to WireMock
+  -> WireMock matches against mocks/stripe/mappings/*.json
+  -> App receives mock response as if Stripe replied
+```
+
+No `isDev` flags. App code is identical in dev and production.
+
+## PowerHouse Integration
+
+DevStrap implements a contract for integration with PowerHouse:
+
+```bash
+# Get catalog
+./devstack.sh --options
+
+# Bootstrap a project
+./devstack.sh --bootstrap '{"project":"myapp","selections":{...}}'
+```
+
+See `DEVSTRAP-POWERHOUSE-CONTRACT.md` for the full contract specification.
+
+## Contributing
 
 | Guide | What |
 |-------|------|
-| [QUICKSTART](docs/QUICKSTART.md) | Try the example, CLI reference |
-| [PROJECT_SETUP](docs/PROJECT_SETUP.md) | Set up your own project from scratch |
-| [ADDING_MOCKS](docs/ADDING_MOCKS.md) | Mock patterns, WireMock mappings |
-| [ADDING_SERVICES](docs/ADDING_SERVICES.md) | Custom services with port forwarding |
-| [DEVELOPMENT](docs/DEVELOPMENT.md) | Dev workflow, devcontainers, database |
-| [TESTING](docs/TESTING.md) | Writing and running tests |
-| [CREATING_TEMPLATES](docs/CREATING_TEMPLATES.md) | Adding new app templates |
-| [ARCHITECTURE](docs/ARCHITECTURE.md) | System design and internals |
-| [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | Common issues and fixes |
-
-## Design Principles
-
-1. **Only Docker required** — Nothing else installed on the developer's machine
-2. **Directory-driven config** — The filesystem IS the configuration
-3. **Transparent interception** — App code is identical in dev and production
-4. **Clean slate** — `stop` removes everything. `start` builds from scratch. Deterministic.
-5. **Proof of execution** — Tests produce HTML reports with screenshots, not just exit codes
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | System design, assembly pipeline, catalog |
+| [ADDING_SERVICES](docs/ADDING_SERVICES.md) | Add a new service to the catalog |
+| [CREATING_TEMPLATES](docs/CREATING_TEMPLATES.md) | Create a new app/frontend template |
+| [QUICKSTART](docs/QUICKSTART.md) | Getting started with dev-strap |
+| [DEVELOPMENT](docs/DEVELOPMENT.md) | Developer guide for factory contributors |

@@ -1,237 +1,237 @@
-# DevStack Architecture
+# Architecture
 
-## Design Principles
+## Factory / Product Separation
 
-1. **Only Docker required** — No language runtimes, package managers, or tools on the host machine
-2. **Directory-driven config** — The filesystem IS the configuration. `ls mocks/` shows what's mocked
-3. **Transparent interception** — App code makes real HTTPS requests; DNS + Caddy + WireMock intercept them
-4. **Clean slate** — `stop` removes everything. `start` builds from scratch. Deterministic every time
-5. **Proof of execution** — Tests produce HTML reports, screenshots, and JSON artifacts
+DevStrap is two systems sharing one repo:
 
-## System Diagram
+**Factory** (creation-time) -- presents the catalog, validates selections, assembles a project. Lives in this repo. Runs once at bootstrap.
+
+**Product** (runtime) -- starts, stops, tests, manages mocks. Lives in the user's project directory. Self-contained, no dependency on the factory.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Docker Network                               │
-│                    (project-internal bridge)                         │
-│                                                                     │
-│  ┌──────────┐     ┌──────────────────────────────┐                  │
-│  │          │     │        Caddy v2 (web)         │                  │
-│  │   App    │────▶│  - Path routing:              │◀── localhost:8080│
-│  │(backend) │     │    /api/* → app (backend)     │◀── localhost:8443│
-│  │          │     │    /*    → frontend (if any)   │                  │
-│  └────┬─────┘     │  - Proxies mocked domains     │                  │
-│       │           │    to WireMock                 │                  │
-│       │           │  - DNS aliases:               │                  │
-│  ┌────┴─────┐     │    api.openai.com              │                  │
-│  │ Frontend │────▶│    api.stripe.com              │                  │
-│  │  (Vite)  │     │    (from mocks/*/domains)      │                  │
-│  │(optional)│     └──────────┬───────────────────┘                  │
-│  └──────────┘                │                                      │
-│                              ▼                                      │
-│  ┌──────────┐     ┌──────────────────────┐     ┌──────────────┐    │
-│  │    DB    │     │     WireMock          │     │   cert-gen   │    │
-│  │(MariaDB/ │     │  - JSON stub mappings │     │  - Root CA   │    │
-│  │ Postgres)│     │  - Stateful scenarios │     │  - Server    │    │
-│  └──────────┘     │  - Conditional logic  │     │    cert      │    │
-│                   └───────────────────────┘     └──────────────┘    │
-│  ┌──────────┐                                                       │
-│  │  Redis   │     ┌──────────────────────┐                          │
-│  │ NATS     │     │   Tester (Playwright)│                          │
-│  │ MinIO    │     │  - Runs specs        │                          │
-│  │ Mailpit  │     │  - Screenshots/video │                          │
-│  │  (extras)│     └──────────────────────┘                          │
-│  └──────────┘                                                       │
-│                   ┌──────────────────────┐                          │
-│  ┌──────────┐     │   Test Dashboard     │◀── localhost:8082        │
-│  │Adminer   │     │  - HTTP file server  │                          │
-│  │Swagger UI│     │  - Browse reports    │                          │
-│  │  (tools) │     └──────────────────────┘                          │
-│  └──────────┘                                                       │
-└─────────────────────────────────────────────────────────────────────┘
+FACTORY (this repo)                         PRODUCT (user's project)
+  contract/manifest.json  ─┐                  docker-compose.yml
+  templates/apps/*/        ├─ assembly ──▶     services/*.yml
+  templates/extras/*/      │                   project.env
+  devstack.sh              ┘                   devstack.sh (runtime)
 ```
 
-## Directory Structure
+The boundary is the bootstrap moment. Everything before = factory concern. Everything after = product concern.
+
+### Why this matters
+
+- The product has no unused templates, no catalog logic, no validation code
+- `ls services/` shows the user's stack -- same as `ls mocks/` shows what's mocked
+- Adding a service to the catalog does not change existing products
+- The factory can evolve independently of deployed products
+
+## The Assembly Pipeline
+
+`generate_from_bootstrap()` is the core of the factory. It takes a validated JSON payload and:
 
 ```
-devstack/
-├── devstack.sh              # CLI entry point
-├── project.env              # Project configuration
-├── .generated/              # Auto-generated files (gitignored)
-│   ├── docker-compose.yml   # Assembled from templates
-│   ├── Caddyfile            # Built from mocks/*/domains
-│   └── domains.txt          # All mocked domains (for cert-gen)
-│
-├── core/                    # Generation scripts
-│   ├── certs/
-│   │   └── generate.sh     # PKI generation (runs in container)
-│   ├── caddy/
-│   │   └── generate-caddyfile.sh # Caddyfile from directory structure
-│   └── compose/
-│       └── generate.sh      # Docker-compose from templates
-│
-├── contract/
-│   └── manifest.json        # Catalog source of truth (presets, categories, wiring)
-│
-├── templates/               # Composable service definitions
-│   ├── apps/
-│   │   ├── node-express/    # Dockerfile + service.yml + .devcontainer/
-│   │   ├── php-laravel/
-│   │   ├── go/              # Includes air (file-watcher) config
-│   │   ├── python-fastapi/  # FastAPI with uvicorn + uv package manager
-│   │   └── rust/            # Cargo workspace with cargo-watch
-│   ├── frontends/
-│   │   └── vite/            # Vite dev server with HMR
-│   ├── databases/
-│   │   ├── mariadb/
-│   │   └── postgres/
-│   └── extras/
-│       ├── redis/
-│       ├── mailpit/
-│       ├── nats/            # NATS messaging with JetStream
-│       ├── minio/           # S3-compatible object storage
-│       ├── db-ui/           # Adminer database browser
-│       └── swagger-ui/      # OpenAPI spec viewer
-│
-├── mocks/                   # One directory per mocked service
-│   ├── example-api/
-│   │   ├── domains          # "api.example-provider.com"
-│   │   └── mappings/        # WireMock JSON stubs
-│   └── example-payment/
-│       ├── domains          # "api.payment-provider.com"
-│       └── mappings/        # Stateful + conditional stubs
-│
-├── app/                     # Your application source code
-│   ├── Dockerfile
-│   ├── src/
-│   └── init.sh             # Project-specific initialization
-│
-├── tests/
-│   ├── playwright/          # Test specs + config
-│   └── results/             # Test output (transient)
-│
-└── docs/
+JSON payload
+  │
+  ├─ 1. Extract selections (app, database, frontend, extras)
+  ├─ 2. Create directory structure
+  ├─ 3. Copy product/devstack.sh (runtime CLI)
+  ├─ 4. Copy templates/common/*.yml (cert-gen, tester, test-dashboard)
+  ├─ 5. Copy selected templates:
+  │       templates/apps/{chosen}/service.yml     -> services/app.yml
+  │       templates/apps/{chosen}/Dockerfile       -> app/Dockerfile
+  │       templates/databases/{chosen}/service.yml -> services/database.yml
+  │       templates/frontends/{chosen}/service.yml -> services/frontend.yml
+  │       templates/extras/{name}/service.yml      -> services/{name}.yml
+  ├─ 6. Write project.env (all config, ports, wiring)
+  ├─ 7. Resolve auto-wiring rules -> append to project.env
+  ├─ 8. Assemble docker-compose.yml (include directives)
+  ├─ 9. Scaffold mocks (if WireMock selected)
+  └─ 10. Scaffold test infrastructure
 ```
 
-## SSL/TLS Certificate Chain
+## Docker Compose Include Pattern
 
-```
-cert-gen container (alpine:3)
-    │
-    ├── Reads: .generated/domains.txt (all domains from mocks/*/domains)
-    │
-    ├── Generates:
-    │   ├── ca.key + ca.crt           Root CA (10-year validity)
-    │   └── server.key + server.crt   Server cert signed by Root CA
-    │                                  SANs: localhost + all mock domains
-    │
-    └── Outputs to: project-certs volume (shared with caddy, app, wiremock)
-```
+The product's `docker-compose.yml` uses Compose `include` (v2.20+):
 
-The app container trusts the Root CA via `NODE_EXTRA_CA_CERTS` (Node.js), `SSL_CERT_FILE` (Go), or OS trust store update (PHP). This means `https.request('api.openai.com')` succeeds with our self-signed cert.
+```yaml
+include:
+  - path: services/cert-gen.yml
+    project_directory: .
+  - path: services/app.yml
+    project_directory: .
+  - path: services/caddy.yml
+    project_directory: .
+  - path: services/database.yml
+    project_directory: .
+  # ... one entry per selected service
 
-## Mock Interception Flow (detailed)
-
-1. App code calls `https://api.stripe.com/v1/charges`
-2. Docker's internal DNS resolves `api.stripe.com` to the Caddy container (configured via `networks.aliases` in docker-compose)
-3. Caddy receives the TLS connection, terminates it using our custom cert
-4. Caddy's site block for `api.stripe.com` proxies the decrypted request to `http://wiremock:8080`
-5. Caddy adds `X-Original-Host: api.stripe.com` header so WireMock knows the original target
-6. WireMock matches the request against `mocks/stripe/mappings/*.json`
-7. WireMock returns the mock response (may be stateful or conditional)
-8. Response flows back through Caddy → app, as if Stripe responded
-
-## Generation Pipeline
-
-```
-project.env + mocks/*/domains
-         │
-         ├──▶ core/caddy/generate-caddyfile.sh ──▶ .generated/Caddyfile
-         │
-         ├──▶ core/compose/generate.sh ──▶ .generated/docker-compose.yml
-         │     │
-         │     ├── reads templates/apps/{APP_TYPE}/service.yml
-         │     ├── reads templates/frontends/{FRONTEND_TYPE}/service.yml (if configured)
-         │     ├── reads templates/databases/{DB_TYPE}/service.yml
-         │     ├── reads templates/extras/{name}/service.yml
-         │     ├── mounts mocks/*/mappings/ into WireMock (for request matching)
-         │     ├── mounts mocks/*/__files/ into WireMock (for response bodies)
-         │     └── applies wiring rules from contract/manifest.json
-         │
-         └──▶ .generated/domains.txt ──▶ core/certs/generate.sh (in container)
-                                              │
-                                              └──▶ project-certs volume
+networks:
+  devstack-internal:
+    driver: bridge
 ```
 
-Everything in `.generated/` is ephemeral — deleted on `devstack.sh stop`, regenerated on `devstack.sh start`.
+Each service file is a standalone compose fragment with a `services:` top-level key. The `project_directory: .` directive makes relative paths resolve from the product root, not the service file location.
 
-## Mock Recording Pipeline
+Key behaviors:
+- Volumes declared in included files merge into a global volumes section
+- Services in included files can reference each other in `depends_on`
+- The shared network `devstack-internal` is declared in the root compose file
+- Variables resolve from `.env` (symlinked to `project.env`) in the project root
 
+## Caddy Proxy Layer
+
+Caddy serves as the reverse proxy (`web` container). It handles three concerns:
+
+**App routing** -- proxies to the backend:
+- HTTP backends: `reverse_proxy app:3000`
+- PHP-FPM: `php_fastcgi app:9000`
+- With frontend: path-based routing (`/api/*` to backend, `/*` to Vite)
+
+**Mock interception** -- terminates TLS for mocked domains and proxies to WireMock:
 ```
-./devstack.sh record <name>
-         │
-         ├── Reads mocks/<name>/domains for the target API hostname
-         ├── Runs temporary WireMock in proxy mode (--proxy-all --record-mappings)
-         ├── Captures request/response pairs to mocks/<name>/recordings/
-         │
-         └── ./devstack.sh apply-recording <name>
-              │
-              ├── Copies mappings to mocks/<name>/mappings/
-              ├── Copies response bodies to mocks/<name>/__files/
-              ├── Rewrites bodyFileName paths for WireMock subdirectory mounting
-              ├── Fixes file ownership (container writes as root)
-              ├── Cleans up recordings/
-              └── Calls reload-mocks (WireMock /__admin/mappings/reset)
-```
-
-## Adding a New App Template
-
-1. Create `templates/apps/my-language/`
-2. Add `service.yml` (docker-compose service definition with `${VAR}` placeholders)
-3. Add `Dockerfile` (language toolchain + file-watcher for live reload)
-4. Optionally add `.devcontainer/devcontainer.json` for VS Code
-5. Set `APP_TYPE=my-language` in `project.env`
-
-The service.yml must define a service named `app` that exposes port 3000 (for most languages) or 9000 (for PHP-FPM). Caddy handles both via `reverse_proxy` and `php_fastcgi` respectively — no protocol branching is needed in the template. See [CREATING_TEMPLATES.md](CREATING_TEMPLATES.md) for a full walkthrough.
-
-## Path-Based Routing (Caddy)
-
-When a frontend is configured alongside a backend, Caddy provides path-based routing through a single entry point (`localhost:8080` / `localhost:8443`):
-
-```
-Request ──▶ Caddy (web)
-              │
-              ├── /api/*  ──▶ reverse_proxy app:3000   (backend)
-              └── /*      ──▶ reverse_proxy frontend:5173 (frontend / Vite)
+mock-domain:443 {
+    tls /certs/server.crt /certs/server.key
+    reverse_proxy wiremock:8080 {
+        header_up X-Original-Host {http.request.host}
+    }
+}
 ```
 
-Caddy's `reverse_proxy` handles WebSocket upgrade headers automatically, so Vite's HMR works without special configuration. For PHP backends, Caddy uses `php_fastcgi app:9000` instead of `reverse_proxy` — this is transparent to the frontend and requires no protocol branching in the generator.
+**Test results** -- serves static HTML reports at `/test-results/`.
 
-When no frontend is configured, all requests route directly to the backend.
+The Caddyfile is generated at product start time because it depends on `mocks/*/domains`.
 
-## Auto-Wiring
+## Mock Interception Flow
 
-The `wiring` array in `contract/manifest.json` declares rules that fire when specific items are co-selected. During generation, `resolve_wiring()` evaluates each rule's `when` condition against the current selections and injects environment variables into the target service.
+```
+1. App calls https://api.stripe.com/v1/charges
+2. Docker DNS resolves api.stripe.com to Caddy (network alias in caddy.yml)
+3. Caddy terminates TLS using custom cert (SANs include mock domains)
+4. Caddy adds X-Original-Host: api.stripe.com header
+5. Caddy proxies to http://wiremock:8080
+6. WireMock matches against mocks/stripe/mappings/*.json
+7. Mock response flows back through Caddy to app
+```
 
-Example: when both `app.*` and `services.redis` are selected, the rule sets `REDIS_URL=redis://redis:6379` on the app container — no manual configuration needed.
+The app code is identical in dev and production. No `isDev` flags.
 
-Wiring rules are informational in the contract. PowerHouse can display them as hints or ignore the key entirely.
+DNS interception works because the `caddy.yml` service definition includes network aliases for each mocked domain. These aliases are generated at start time from `mocks/*/domains`.
 
-## Presets
+## Certificate Generation
 
-The `presets` key in the manifest defines pre-configured stack bundles for common use cases (e.g., `spa-api`, `api-only`, `full-stack`, `data-pipeline`). Each preset specifies pre-selected items and optionally lists categories that still require user input via `prompts`.
+The `cert-gen` service is a one-shot Alpine container that generates a CA + server certificate:
 
-Presets are a UI-only concept. PowerHouse expands a preset into concrete selections before sending the `--bootstrap` payload. dev-strap never receives a preset identifier.
+```
+cert-gen container (alpine:3 + openssl)
+  ├─ Reads: domains.txt (all domains from mocks/*/domains)
+  ├─ Generates:
+  │   ├─ ca.key + ca.crt (Root CA, 10-year validity)
+  │   └─ server.key + server.crt (Server cert, SANs: localhost + mock domains)
+  └─ Outputs to: devstack-certs volume (shared with Caddy, app, WireMock)
+```
+
+App containers trust the CA via environment variables:
+- Node.js: `NODE_EXTRA_CA_CERTS=/certs/ca.crt`
+- Go / Rust: `SSL_CERT_FILE=/certs/ca.crt`
+- Python: `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`
+- PHP: `update-ca-certificates` in init script
+
+## Auto-Wiring System
+
+The `wiring` array in `contract/manifest.json` declares rules that fire when specific items are co-selected:
+
+```json
+{
+  "when": ["app.*", "services.redis"],
+  "set": "app.*.redis_url",
+  "template": "redis://redis:6379"
+}
+```
+
+- `when`: all items must be present in selections (wildcards supported)
+- `set`: output variable path; last segment becomes the env var name (uppercased)
+- `template`: the value to write to project.env
+
+During assembly, `resolve_wiring()` evaluates each rule against the selections and writes matching variables to `project.env`. For example, selecting Go + Redis writes `REDIS_URL=redis://redis:6379`.
+
+Current wiring rules:
+
+| Condition | Variable | Value |
+|-----------|----------|-------|
+| Vite + app | `FRONTEND_API_PREFIX` | `/api` |
+| app + Redis | `REDIS_URL` | `redis://redis:6379` |
+| app + NATS | `NATS_URL` | `nats://nats:4222` |
+| app + MinIO | `S3_ENDPOINT` | `http://minio:9000` |
+| db-ui + database | `DEFAULT_SERVER` | `db` |
+| swagger-ui + app | `SPEC_URL` | `http://app:{port}/docs/openapi.json` |
+
+## Preset Bundles
+
+Presets in the manifest define pre-configured stacks:
+
+| Preset | Selections |
+|--------|-----------|
+| `spa-api` | Vite + PostgreSQL + QA + WireMock (prompts for app type) |
+| `api-only` | PostgreSQL + Redis + QA + Swagger UI (prompts for app type) |
+| `full-stack` | Vite + PostgreSQL + Redis + QA + Prometheus + Grafana + Dozzle (prompts for app type) |
+| `data-pipeline` | Python FastAPI + PostgreSQL + NATS + MinIO |
+
+Presets are expanded into concrete selections before assembly. The factory never receives a preset identifier directly -- PowerHouse expands them first.
+
+## The Catalog (manifest.json)
+
+`contract/manifest.json` is the single source of truth for the catalog:
+
+```json
+{
+  "contract": "devstrap-options",
+  "version": "1",
+  "presets": { ... },
+  "categories": {
+    "app":           { "selection": "single", "required": true,  "items": { ... } },
+    "frontend":      { "selection": "single", "required": false, "items": { ... } },
+    "database":      { "selection": "single", "required": false, "items": { ... } },
+    "services":      { "selection": "multi",  "required": false, "items": { ... } },
+    "tooling":       { "selection": "multi",  "required": false, "items": { ... } },
+    "observability": { "selection": "multi",  "required": false, "items": { ... } }
+  },
+  "wiring": [ ... ]
+}
+```
+
+Each item can declare:
+- `defaults` -- default port(s) and settings
+- `requires` -- dependencies (wildcard patterns like `app.*`)
+- `conflicts` -- incompatible items
+
+The `--options` command returns this manifest for PowerHouse to present as a UI.
 
 ## Current Catalog
 
-| Category | Selection | Required | Items |
-|----------|-----------|----------|-------|
-| `app` | single | yes | `node-express`, `php-laravel`, `go`, `python-fastapi`, `rust` |
-| `frontend` | single | no | `vite` |
-| `database` | single | no | `postgres`, `mariadb` |
-| `services` | multi | no | `redis`, `mailpit`, `nats`, `minio` |
-| `tooling` | multi | no | `qa`, `qa-dashboard`, `wiremock`, `devcontainer`, `db-ui`, `swagger-ui` |
-| `observability` | multi | no | `prometheus`, `grafana`, `dozzle` |
+| Category | Items |
+|----------|-------|
+| App (5) | `node-express`, `php-laravel`, `go`, `python-fastapi`, `rust` |
+| Frontend (1) | `vite` |
+| Database (2) | `postgres`, `mariadb` |
+| Services (4) | `redis`, `mailpit`, `nats`, `minio` |
+| Tooling (6) | `qa`, `qa-dashboard`, `wiremock`, `devcontainer`, `db-ui`, `swagger-ui` |
+| Observability (3) | `prometheus`, `grafana`, `dozzle` |
 
-The full catalog with defaults, dependencies, and conflicts is defined in `contract/manifest.json`.
+4 preset bundles. 6 auto-wiring rules. Port collision detection at validation time.
+
+## Contract Validation
+
+The `--bootstrap` flow validates payloads before assembly:
+
+1. Required categories have selections
+2. Single-select categories have exactly one item
+3. All referenced items exist in the manifest
+4. Dependencies (`requires`) are satisfied
+5. Conflicts are not violated
+6. Default ports don't collide across selected services
+
+Test fixtures in `tests/contract/fixtures/` cover all validation scenarios.
+
+---
+
+*Note: This document supersedes `docs/ARCHITECTURE-NEXT.md`, which contains the original research and reasoning behind the factory/product split. That document is preserved as historical context.*
