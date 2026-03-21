@@ -1,0 +1,12 @@
+include:
+  - path: services/database.yml
+    env_file: services/database.env
+  - path: services/redis.yml
+  - path: services/caddy.yml
+
+networks:
+  devstack-internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${NETWORK_SUBNET}
