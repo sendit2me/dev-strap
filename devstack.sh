@@ -1597,6 +1597,19 @@ generate_from_bootstrap() {
         cp "${DEVSTACK_DIR}/product/.gitignore" "${dest}/.gitignore"
     fi
 
+    # Copy product documentation (AI agent guides, service management, troubleshooting)
+    if [ -d "${DEVSTACK_DIR}/product/docs" ]; then
+        mkdir -p "${dest}/docs"
+        cp -r "${DEVSTACK_DIR}/product/docs/." "${dest}/docs/"
+        log "  Copied product docs to docs/" >&2
+    fi
+
+    # Copy product CLAUDE.md (AI agent entry point)
+    if [ -f "${DEVSTACK_DIR}/product/CLAUDE.md" ]; then
+        cp "${DEVSTACK_DIR}/product/CLAUDE.md" "${dest}/CLAUDE.md"
+        log "  Copied CLAUDE.md" >&2
+    fi
+
     # ── 6. Copy common service templates ──────────────────────────────────
     log "Copying common service templates..." >&2
     for common_file in cert-gen.yml tester.yml test-dashboard.yml; do
