@@ -213,10 +213,11 @@ assert_json "has spa-api preset"    "${options_output}" '.presets["spa-api"]'
 assert_json "has api-only preset"   "${options_output}" '.presets["api-only"]'
 assert_json "has full-stack preset" "${options_output}" '.presets["full-stack"]'
 assert_json "has data-pipeline preset" "${options_output}" '.presets["data-pipeline"]'
+assert_json "has agentic-dev preset"   "${options_output}" '.presets["agentic-dev"]'
 assert_json_eq "spa-api has prompts" "${options_output}" '.presets["spa-api"].prompts | length' "1"
 assert_json_eq "spa-api prompts app" "${options_output}" '.presets["spa-api"].prompts[0]' "app"
 assert_json_eq "data-pipeline has no prompts" "${options_output}" '.presets["data-pipeline"].prompts // [] | length' "0"
-assert_json_eq "preset count is 4"  "${options_output}" '.presets | keys | length' "4"
+assert_json_eq "preset count is 5"  "${options_output}" '.presets | keys | length' "5"
 
 # Wiring rules
 assert_json "has wiring"          "${options_output}" '.wiring'
