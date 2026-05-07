@@ -18,7 +18,10 @@ services:
       cert-gen:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      # Use 127.0.0.1 explicitly: Nuxt binds only IPv4 (0.0.0.0:3000)
+      # while Alpine's busybox wget resolves "localhost" to ::1 first
+      # and fails with "Connection refused" before falling back to v4.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/"]
       interval: 5s
       timeout: 3s
       retries: 30
