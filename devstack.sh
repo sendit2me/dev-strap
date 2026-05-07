@@ -1523,6 +1523,8 @@ generate_from_bootstrap() {
     local dozzle_port=9999
     local adminer_port=8083
     local swagger_port=8084
+    local prism_port=4010
+    local prism_spec_path="openapi.yaml"
     local nats_port=4222
     local nats_monitor_port=8222
     local minio_port=9000
@@ -1551,6 +1553,12 @@ generate_from_bootstrap() {
     fi
     if printf '%s\n' "${payload}" | jq -e '.selections.tooling["swagger-ui"].overrides.port' &>/dev/null; then
         swagger_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling["swagger-ui"].overrides.port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.prism.overrides.port' &>/dev/null; then
+        prism_port=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling.prism.overrides.port')
+    fi
+    if printf '%s\n' "${payload}" | jq -e '.selections.tooling.prism.overrides.spec_path' &>/dev/null; then
+        prism_spec_path=$(printf '%s\n' "${payload}" | jq -r '.selections.tooling.prism.overrides.spec_path')
     fi
     if printf '%s\n' "${payload}" | jq -e '.selections.services.nats.overrides.client_port' &>/dev/null; then
         nats_port=$(printf '%s\n' "${payload}" | jq -r '.selections.services.nats.overrides.client_port')
@@ -1726,6 +1734,10 @@ ENV
         fi
         if printf '%s\n' "${payload}" | jq -e '.selections.tooling["swagger-ui"]' &>/dev/null; then
             printf 'SWAGGER_PORT=%s\n' "${swagger_port}"
+        fi
+        if printf '%s\n' "${payload}" | jq -e '.selections.tooling.prism' &>/dev/null; then
+            printf 'PRISM_PORT=%s\n' "${prism_port}"
+            printf 'PRISM_SPEC_PATH=%s\n' "${prism_spec_path}"
         fi
         if printf '%s\n' "${payload}" | jq -e '.selections.services.nats' &>/dev/null; then
             printf 'NATS_PORT=%s\n' "${nats_port}"

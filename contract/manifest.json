@@ -160,6 +160,12 @@
           "description": "WireMock with hot-reload mock definitions",
           "defaults": { "port": 8443 }
         },
+        "prism": {
+          "label": "OpenAPI Mock Server (Prism)",
+          "description": "Stoplight Prism in mock mode — generates HTTP mocks directly from an OpenAPI spec (zero stub authoring). Useful for parallel-tier dev: mock a service from its OpenAPI file so consumers can develop against it before the real implementation is ready.",
+          "defaults": { "port": 4010, "spec_path": "openapi.yaml" },
+          "requires": ["app.*"]
+        },
         "devcontainer": {
           "label": "VS Code Dev Container",
           "description": "Generates per-app devcontainer.json for VS Code Remote Containers"
