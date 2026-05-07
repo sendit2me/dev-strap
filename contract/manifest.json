@@ -88,6 +88,11 @@
           "label": "Frontend Dev Server (Vite)",
           "description": "Vite dev server with HMR, configurable API proxy to backend",
           "defaults": { "port": 5173, "api_base": "/api" }
+        },
+        "nuxt": {
+          "label": "Frontend Dev Server (Nuxt 3)",
+          "description": "Nuxt 3 dev server with HMR. Combined FE+BFF capable via Nuxt server routes; per-route SSR/CSR control via definePageMeta.",
+          "defaults": { "port": 3000, "api_base": "/api" }
         }
       }
     },

@@ -1502,9 +1502,16 @@ generate_from_bootstrap() {
     local frontend_type
     frontend_type=$(printf '%s\n' "${payload}" | jq -r '.selections.frontend // {} | keys[0] // "none"')
 
-    local frontend_port=5173
-    if printf '%s\n' "${payload}" | jq -e '.selections.frontend.vite.overrides.port' &>/dev/null; then
-        frontend_port=$(printf '%s\n' "${payload}" | jq -r '.selections.frontend.vite.overrides.port')
+    # Default port by frontend type (manifest defaults; overridden by user below)
+    local frontend_port
+    case "${frontend_type}" in
+        vite) frontend_port=5173 ;;
+        nuxt) frontend_port=3000 ;;
+        *)    frontend_port=3000 ;;
+    esac
+    if [ "${frontend_type}" != "none" ] && \
+       printf '%s\n' "${payload}" | jq -e ".selections.frontend[\"${frontend_type}\"].overrides.port" &>/dev/null; then
+        frontend_port=$(printf '%s\n' "${payload}" | jq -r ".selections.frontend[\"${frontend_type}\"].overrides.port")
     fi
 
     # ── 2. Derive ports ───────────────────────────────────────────────────
@@ -1956,7 +1963,9 @@ SPEC
     # ── 15. Create frontend/package.json (if frontend selected) ───────────
     if [ "${frontend_type}" != "none" ]; then
         log "Scaffolding frontend directory..." >&2
-        cat > "${dest}/frontend/package.json" <<FRONTPKG
+        case "${frontend_type}" in
+            vite)
+                cat > "${dest}/frontend/package.json" <<FRONTPKG
 {
   "name": "${project_name}-frontend",
   "private": true,
@@ -1971,6 +1980,26 @@ SPEC
   }
 }
 FRONTPKG
+                ;;
+            nuxt)
+                cat > "${dest}/frontend/package.json" <<FRONTPKG
+{
+  "name": "${project_name}-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0",
+    "build": "nuxt build",
+    "preview": "nuxt preview"
+  },
+  "devDependencies": {
+    "nuxt": "^3.13.0"
+  }
+}
+FRONTPKG
+                ;;
+        esac
     fi
 
     # ── 16. Devcontainer (if selected) ────────────────────────────────────

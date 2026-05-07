@@ -1,0 +1,29 @@
+services:
+  frontend:
+    build:
+      context: ${FRONTEND_SOURCE}
+      dockerfile: Dockerfile
+    container_name: ${PROJECT_NAME}-frontend
+    env_file: project.env
+    volumes:
+      - ${FRONTEND_SOURCE}:/app
+      - /app/node_modules
+      - devstack-certs:/certs:ro
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+      - NODE_EXTRA_CA_CERTS=/certs/ca.crt
+      - NUXT_PUBLIC_API_BASE=${FRONTEND_API_PREFIX}
+    depends_on:
+      cert-gen:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - devstack-internal
+
+volumes:
+  devstack-certs:
