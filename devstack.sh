@@ -1392,7 +1392,10 @@ resolve_wiring() {
 
         # Helper: build resolved defaults (manifest defaults merged with overrides)
         # for each selected item → { "cat.item": { merged_defaults } }
-        reduce ($sel | to_entries[] |
+        # NB: the whole `reduce ... ` expression must be parenthesised before
+        # `as $resolved`, otherwise jq parses the bind as a stray top-level
+        # `as` and fails with "syntax error, unexpected as".
+        (reduce ($sel | to_entries[] |
             .key as $cat |
             (.value // {}) | to_entries[] |
             .key as $item | .value as $s |
@@ -1401,7 +1404,7 @@ resolve_wiring() {
                 value: (($manifest.categories[$cat].items[$item].defaults // {})
                         * ($s.overrides // {}))
             }
-        ) as $entry ({}; . + {($entry.key): $entry.value}) as $resolved |
+        ) as $entry ({}; . + {($entry.key): $entry.value})) as $resolved |
 
         # Process each wiring rule
         reduce ($manifest.wiring // [] | .[]) as $rule ({};
