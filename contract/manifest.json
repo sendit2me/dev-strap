@@ -42,6 +42,16 @@
         "database": ["postgres"],
         "services": ["nats", "minio"]
       }
+    },
+    "agentic-dev": {
+      "label": "Agentic Development (deven)",
+      "description": "Nuxt 3 FE+BFF + Go BE + Postgres, with Prism (own-service OpenAPI mocks) + WireMock (third-party API mocks). Designed for the deven agentic workflow. NB: callers must apply selections.app.go.overrides.port=8080 when expanding the preset — both app.go and frontend.nuxt default to port 3000.",
+      "selections": {
+        "app": ["go"],
+        "frontend": ["nuxt"],
+        "database": ["postgres"],
+        "tooling": ["wiremock", "prism"]
+      }
     }
   },
   "categories": {
