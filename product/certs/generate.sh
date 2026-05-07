@@ -33,6 +33,10 @@ if [ -f "${CERT_DIR}/server.crt" ] && [ "${FORCE_REGEN:-0}" != "1" ]; then
         done < "${DOMAINS_FILE}"
     fi
     expected_sans="${expected_sans}\nDNS:${PROJECT_NAME:-devstack}.local"
+    # Prism subdomain — always included so the cert covers the mock host
+    # whether or not Prism is selected this run. SANs are cheap; this
+    # avoids a regen step the first time a user enables the prism extra.
+    expected_sans="${expected_sans}\nDNS:mock.${PROJECT_NAME:-devstack}.local"
     expected_sorted=$(echo -e "${expected_sans}" | sort)
 
     if [ "${current_sans}" = "${expected_sorted}" ]; then
@@ -63,6 +67,8 @@ fi
 # Add the project-local hostname
 PROJECT_NAME="${PROJECT_NAME:-devstack}"
 SAN_ENTRIES="${SAN_ENTRIES},DNS:${PROJECT_NAME}.local"
+# And the Prism mock subdomain (always — see comment above).
+SAN_ENTRIES="${SAN_ENTRIES},DNS:mock.${PROJECT_NAME}.local"
 
 ALL_SANS="${SAN_ENTRIES},${IP_ENTRIES}"
 echo "[cert-gen] SANs: ${ALL_SANS}"

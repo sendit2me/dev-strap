@@ -141,10 +141,21 @@ generate_caddyfile() {
 
 EOF
 
-    # App server block
+    # App server block.
+    #
+    # We split HTTP and HTTPS into separate site blocks because Caddy v2
+    # rejects a TLS directive on a :80 listener when `auto_https off`
+    # is set globally ("server listening on [:80] is HTTP, but attempts
+    # to configure TLS connection policies"). The HTTP block redirects
+    # to HTTPS so http://localhost:${HTTP_PORT}/ still works for the
+    # consumer.
     if [ "${APP_TYPE}" = "php-laravel" ]; then
         cat >> "${caddyfile}" <<CADDY
-localhost:80, localhost:443, ${PROJECT_NAME}.local:80, ${PROJECT_NAME}.local:443 {
+http://localhost, http://${PROJECT_NAME}.local {
+    redir https://{host}:${HTTPS_PORT}{uri} 308
+}
+
+localhost:443, ${PROJECT_NAME}.local:443 {
     tls /certs/server.crt /certs/server.key
     root * /var/www/html/public
     php_fastcgi app:9000
@@ -158,7 +169,11 @@ localhost:80, localhost:443, ${PROJECT_NAME}.local:80, ${PROJECT_NAME}.local:443
 CADDY
     elif [ -n "${FRONTEND_TYPE:-}" ] && [ "${FRONTEND_TYPE}" != "none" ]; then
         cat >> "${caddyfile}" <<CADDY
-localhost:80, localhost:443, ${PROJECT_NAME}.local:80, ${PROJECT_NAME}.local:443 {
+http://localhost, http://${PROJECT_NAME}.local {
+    redir https://{host}:${HTTPS_PORT}{uri} 308
+}
+
+localhost:443, ${PROJECT_NAME}.local:443 {
     tls /certs/server.crt /certs/server.key
     handle ${FRONTEND_API_PREFIX:-/api}/* {
         reverse_proxy app:3000
@@ -175,7 +190,11 @@ localhost:80, localhost:443, ${PROJECT_NAME}.local:80, ${PROJECT_NAME}.local:443
 CADDY
     else
         cat >> "${caddyfile}" <<CADDY
-localhost:80, localhost:443, ${PROJECT_NAME}.local:80, ${PROJECT_NAME}.local:443 {
+http://localhost, http://${PROJECT_NAME}.local {
+    redir https://{host}:${HTTPS_PORT}{uri} 308
+}
+
+localhost:443, ${PROJECT_NAME}.local:443 {
     tls /certs/server.crt /certs/server.key
     reverse_proxy app:3000
     handle_path /test-results/* {
@@ -202,6 +221,27 @@ ${domain_list} {
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-Proto {scheme}
     }
+}
+CADDY
+    fi
+
+    # Prism site block — own-service OpenAPI mocks served from a stable
+    # subdomain (mock.<project>.local). Distinct from the third-party
+    # mocked-domain block above (which forwards to WireMock by SNI).
+    # Routing is host-based so consumers can swap between the real backend
+    # and the spec-driven mock by changing the base URL only.
+    #
+    # NB: hostname resolution is the consumer's responsibility — dev-strap
+    # does not write /etc/hosts. The deven init skill handles that side.
+    if [ -f "${PROJECT_DIR}/services/prism.yml" ]; then
+        # HTTPS-only block: a TLS directive on a :80 listener crashes
+        # Caddy ("server listening on [:80] is HTTP, but attempts to
+        # configure TLS connection policies"). Consumers reach the mock
+        # server via https://mock.<project>.local:<HTTPS_PORT>/.
+        cat >> "${caddyfile}" <<CADDY
+mock.${PROJECT_NAME}.local:443 {
+    tls /certs/server.crt /certs/server.key
+    reverse_proxy prism:4010
 }
 CADDY
     fi
@@ -238,9 +278,21 @@ generate_caddy_service() {
     fi
 
     if [ -f "${PROJECT_DIR}/services/frontend.yml" ]; then
-        extra_depends="
+        extra_depends="${extra_depends}
       frontend:
         condition: service_started"
+    fi
+
+    # Prism: bring up the mock server before Caddy starts proxying it
+    # and add a docker-network alias so in-cluster traffic can resolve
+    # mock.<project>.local without /etc/hosts.
+    local prism_alias=""
+    if [ -f "${PROJECT_DIR}/services/prism.yml" ]; then
+        extra_depends="${extra_depends}
+      prism:
+        condition: service_started"
+        prism_alias="
+          - mock.\${PROJECT_NAME}.local"
     fi
 
     cat > "${service_file}" <<CADDY_SVC
@@ -263,7 +315,7 @@ services:
     networks:
       devstack-internal:
         aliases:
-          - \${PROJECT_NAME}.local${aliases}
+          - \${PROJECT_NAME}.local${prism_alias}${aliases}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/"]
       interval: 5s

@@ -1,6 +1,11 @@
 services:
   prism:
     image: stoplight/prism:5
+    # Stoplight publish stoplight/prism for linux/amd64 only; pin the
+    # platform so Docker uses emulation on arm64 hosts (Apple Silicon,
+    # arm64 Linux with binfmt-misc/qemu) instead of erroring with
+    # "exec format error" on tini.
+    platform: linux/amd64
     container_name: ${PROJECT_NAME}-prism
     command: ["mock", "-h", "0.0.0.0", "-p", "4010", "-d", "/spec/openapi.yaml"]
     ports:
