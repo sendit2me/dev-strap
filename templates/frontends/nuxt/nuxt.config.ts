@@ -6,7 +6,11 @@
 // so Nuxt is reachable from outside the container.
 //
 // In the agentic-dev preset the Nuxt server runs as the FE+BFF; Caddy
-// path-routes /api/* to the Go backend and everything else here.
+// path-routes /api/* to the Nuxt server (which acts as the BFF and
+// makes its own internal call to the Go backend) and everything else
+// here. That routing is gated on FRONTEND_BFF=true in project.env —
+// dev-strap defaults FRONTEND_BFF to false; the deven nuxt-go preset
+// sets it to true in its bootstrap override.
 export default defineNuxtConfig({
   devtools: { enabled: false },
   ssr: true,

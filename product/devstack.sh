@@ -21,6 +21,21 @@
 #   ./devstack.sh apply-recording <m> Apply recorded mappings
 #   ./devstack.sh verify-mocks       Verify mock DNS interception
 #
+# project.env contract (selected vars):
+#   PROJECT_NAME           Required. Lowercase project slug.
+#   APP_TYPE               Required. e.g. node, php-laravel.
+#   HTTP_PORT/HTTPS_PORT   Required. Host-side ports for Caddy.
+#   FRONTEND_TYPE          Optional. nuxt|vite|none. Selects FE container.
+#   FRONTEND_PORT          Optional. Port the FE container listens on.
+#   FRONTEND_API_PREFIX    Optional. Default: /api. Path Caddy routes to BE/BFF.
+#   FRONTEND_BFF           Optional. Default: false. When 'true', the
+#                          frontend container also acts as the BFF, so
+#                          ${FRONTEND_API_PREFIX}/* is routed to the
+#                          frontend container (which then makes its own
+#                          internal call to app:3000) instead of going
+#                          straight to app:3000. Used by FE+BFF presets
+#                          such as nuxt-go.
+#
 # Prerequisites: Docker and Docker Compose v2
 # =============================================================================
 
@@ -64,7 +79,13 @@ load_config() {
         log_err "project.env not found in ${PROJECT_DIR}"
         exit 1
     fi
+    # Auto-export so `docker compose` (a subprocess) sees the vars.
+    # Without `set -a`, sourced vars stay shell-local; compose then warns
+    # "var is not set" and produces invalid mount specs like ":/app".
+    # See DEVSTRAP-DEVEN-CONTRACT.md clause G.
+    set -a
     source "${PROJECT_DIR}/project.env"
+    set +a
 }
 
 validate_config() {
@@ -168,6 +189,14 @@ localhost:443, ${PROJECT_NAME}.local:443 {
 
 CADDY
     elif [ -n "${FRONTEND_TYPE:-}" ] && [ "${FRONTEND_TYPE}" != "none" ]; then
+        # FE+BFF presets (e.g. nuxt-go) absorb the BFF into the frontend
+        # container: /api/* must hit the FE container, which then makes
+        # its own internal call to app:3000. For plain FE presets (e.g.
+        # spa-api) the default keeps /api/* going straight to app:3000.
+        local api_target="app:3000"
+        if [ "${FRONTEND_BFF:-false}" = "true" ]; then
+            api_target="frontend:${FRONTEND_PORT:-3000}"
+        fi
         cat >> "${caddyfile}" <<CADDY
 http://localhost, http://${PROJECT_NAME}.local {
     redir https://{host}:${HTTPS_PORT}{uri} 308
@@ -176,7 +205,7 @@ http://localhost, http://${PROJECT_NAME}.local {
 localhost:443, ${PROJECT_NAME}.local:443 {
     tls /certs/server.crt /certs/server.key
     handle ${FRONTEND_API_PREFIX:-/api}/* {
-        reverse_proxy app:3000
+        reverse_proxy ${api_target}
     }
     handle_path /test-results/* {
         root * /srv/test-results
@@ -346,14 +375,22 @@ generate_wiremock_service() {
 
     log "Generating wiremock service definition..."
 
-    # Build volume mounts from mocks/*/mappings
+    # Build volume mounts from mocks/*/mappings AND mocks/*/__files
+    # (matches parent core/compose/generate.sh behaviour — DEVSTRAP-DEVEN-CONTRACT.md
+    # clause E: __files mount is required for mappings using bodyFileName).
     local mock_volumes=""
     for mock_dir in "${PROJECT_DIR}"/mocks/*/; do
         [ -d "${mock_dir}" ] || continue
         local name
         name=$(basename "${mock_dir}")
-        mock_volumes="${mock_volumes}
+        if [ -d "${mock_dir}mappings" ]; then
+            mock_volumes="${mock_volumes}
       - ./mocks/${name}/mappings:/home/wiremock/mappings/${name}:ro"
+        fi
+        if [ -d "${mock_dir}__files" ]; then
+            mock_volumes="${mock_volumes}
+      - ./mocks/${name}/__files:/home/wiremock/__files/${name}:ro"
+        fi
     done
 
     cat > "${service_file}" <<WIREMOCK_SVC

@@ -86,6 +86,13 @@ CADDY_APP
 elif [ -n "${FRONTEND_TYPE:-}" ]; then
     # Frontend + backend: path-based routing
     FRONTEND_API_PREFIX="${FRONTEND_API_PREFIX:-/api}"
+    # FRONTEND_BFF=true means the frontend container also acts as the
+    # BFF, so /api/* must route to the frontend (which makes its own
+    # internal call to app:3000). Default keeps /api/* on app:3000.
+    API_TARGET="app:3000"
+    if [ "${FRONTEND_BFF:-false}" = "true" ]; then
+        API_TARGET="frontend:${FRONTEND_PORT:-3000}"
+    fi
     cat >> "${OUTPUT_FILE}" <<CADDY_APP
 # ==========================================================================
 # Application server (frontend + backend, path-based routing)
@@ -94,7 +101,7 @@ localhost:80, localhost:443, ${PROJECT_NAME}.local:80, ${PROJECT_NAME}.local:443
     tls /certs/server.crt /certs/server.key
 
     handle ${FRONTEND_API_PREFIX}/* {
-        reverse_proxy app:3000
+        reverse_proxy ${API_TARGET}
     }
 
     handle_path /test-results/* {
