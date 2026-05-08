@@ -167,14 +167,23 @@ PRISM_SPEC_PATH=openapi.yaml
 
 **Required deven-side override** (cycles 1-3 confirmed the gap): the
 `agentic-dev` preset's default `APP_SOURCE=./app` does not match
-deven's convention of placing Go code at `backend/`. deven's
-`init-scaffold.sh` MUST rewrite `APP_SOURCE=./backend` and
-`APP_INIT_SCRIPT=./backend/init.sh` after rsync.
+deven's convention of placing Go code at `backend/`.
 
-**Open contract gap**: dev-strap's `agentic-dev` preset SHOULD accept
-this override at bootstrap time via the existing `selections.*.overrides`
-mechanism. Today it doesn't — `init-scaffold` patches `project.env` after
-the fact.
+**Resolution (2026-05-08, dev-strap branch
+`claude/devstrap-deven-contract-v1`):** dev-strap's `agentic-dev`
+preset now accepts `app_source` as an override on every `app.*` item
+via the existing `selections.app.<item>.overrides.<key>=<value>`
+mechanism. Sending `selections.app.go.overrides.app_source = "./backend"`
+in the bootstrap payload produces a project with
+`APP_SOURCE=./backend`, derived `APP_INIT_SCRIPT=./backend/init.sh`,
+and stubs (Dockerfile, init.sh, main.go, etc.) routed into
+`./backend/` instead of `./app/`. Defaults are unchanged when the
+override is absent.
+
+deven's `init-scaffold.sh` should add `app_source: "./backend"` to
+its bootstrap-overrides payload and retire the post-rsync
+`project.env` patch. (Tracked deven-side as a follow-up to this
+contract update.)
 
 ### C. Per-tier file ownership at the `app/` ↔ `backend/` seam
 

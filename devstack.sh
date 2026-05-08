@@ -1356,6 +1356,23 @@ validate_bootstrap_payload() {
             else . end
         ) |
 
+        # 10b. app_source override must be a safe relative path
+        # (non-empty, starts with "./", no ".." traversal). Defends against
+        # bind-mount escapes when project.env is rendered to disk.
+        reduce (($p.selections.app // {}) | to_entries[]) as $ie (.;
+            if ($ie.value.overrides // {} | has("app_source")) then
+                ($ie.value.overrides.app_source) as $v |
+                if ($v | type) != "string"
+                   or ($v | length) == 0
+                   or ($v | startswith("./") | not)
+                   or ($v | test("(^|/)\\.\\.($|/)"))
+                then
+                    . + [{code:"INVALID_OVERRIDE",
+                          message:"app_source override for \"app.\($ie.key)\" must be a non-empty relative path starting with \"./\" and free of \"..\" segments (got \"\($v|tostring)\")"}]
+                else . end
+            else . end
+        ) |
+
         # 11. port collision detection
         ([($p.selections // {} | to_entries[]) as $ce |
           ($ce.value // {} | to_entries[]) as $ie |
@@ -1505,6 +1522,18 @@ generate_from_bootstrap() {
     local frontend_type
     frontend_type=$(printf '%s\n' "${payload}" | jq -r '.selections.frontend // {} | keys[0] // "none"')
 
+    # Extract optional app_source override (default: ./app). Validated upstream
+    # in validate_bootstrap_payload (rejects empty / non-"./" / ".." segments).
+    # APP_INIT_SCRIPT is derived from APP_SOURCE so the two stay in sync.
+    local app_source="./app"
+    if printf '%s\n' "${payload}" | jq -e ".selections.app[\"${app_type}\"].overrides.app_source" &>/dev/null; then
+        app_source=$(printf '%s\n' "${payload}" | jq -r ".selections.app[\"${app_type}\"].overrides.app_source")
+    fi
+    # app_source_dir is the path relative to ${dest} where stubs / Dockerfile /
+    # init.sh land. Strip the leading "./" so it composes cleanly with ${dest}.
+    local app_source_dir="${app_source#./}"
+    local app_init_script="${app_source}/init.sh"
+
     # Default port by frontend type (manifest defaults; overridden by user below)
     local frontend_port
     case "${frontend_type}" in
@@ -1591,7 +1620,7 @@ generate_from_bootstrap() {
     mkdir -p "${dest}/services"
     mkdir -p "${dest}/caddy"
     mkdir -p "${dest}/certs"
-    mkdir -p "${dest}/app"
+    mkdir -p "${dest}/${app_source_dir}"
     mkdir -p "${dest}/tests/playwright"
     mkdir -p "${dest}/tests/results"
     mkdir -p "${dest}/mocks"
@@ -1646,7 +1675,7 @@ generate_from_bootstrap() {
         cp "${DEVSTACK_DIR}/templates/apps/${app_type}/service.yml" "${dest}/services/app.yml"
     fi
     if [ -f "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" ]; then
-        cp "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" "${dest}/app/Dockerfile"
+        cp "${DEVSTACK_DIR}/templates/apps/${app_type}/Dockerfile" "${dest}/${app_source_dir}/Dockerfile"
     fi
 
     # App source stubs: any file in templates/apps/<type>/ other than
@@ -1673,7 +1702,7 @@ generate_from_bootstrap() {
     }
     _copy_app_source_stubs \
         "${DEVSTACK_DIR}/templates/apps/${app_type}" \
-        "${dest}/app"
+        "${dest}/${app_source_dir}"
 
     # Database template (if selected)
     if [ "${db_type}" != "none" ]; then
@@ -1748,8 +1777,8 @@ NETWORK_SUBNET=172.28.0.0/24
 
 # Application
 APP_TYPE=${app_type}
-APP_SOURCE=./app
-APP_INIT_SCRIPT=./app/init.sh
+APP_SOURCE=${app_source}
+APP_INIT_SCRIPT=${app_init_script}
 FRONTEND_SOURCE=./frontend
 
 # Ports
@@ -1988,18 +2017,18 @@ export default defineConfig({
 TEST_CFG
 
     # ── 14. Create app/init.sh scaffold ───────────────────────────────────
-    cat > "${dest}/app/init.sh" <<'INIT_SH'
+    cat > "${dest}/${app_source_dir}/init.sh" <<'INIT_SH'
 #!/bin/sh
 echo "[init] App initialization starting..."
 # Add your setup steps here (install deps, run migrations, seed data)
 echo "[init] Done."
 INIT_SH
-    chmod +x "${dest}/app/init.sh"
+    chmod +x "${dest}/${app_source_dir}/init.sh"
 
     # Create placeholder OpenAPI spec if swagger-ui is selected
     if printf '%s\n' "${payload}" | jq -e '.selections.tooling["swagger-ui"]' &>/dev/null; then
-        mkdir -p "${dest}/app/docs"
-        cat > "${dest}/app/docs/openapi.json" <<'SPEC'
+        mkdir -p "${dest}/${app_source_dir}/docs"
+        cat > "${dest}/${app_source_dir}/docs/openapi.json" <<'SPEC'
 {
   "openapi": "3.0.0",
   "info": {
@@ -2009,7 +2038,7 @@ INIT_SH
   "paths": {}
 }
 SPEC
-        log "  Created app/docs/openapi.json placeholder" >&2
+        log "  Created ${app_source_dir}/docs/openapi.json placeholder" >&2
     fi
 
     # Create placeholder OpenAPI spec for Prism if prism is selected and
@@ -2018,7 +2047,7 @@ SPEC
     # *directory* at that bind-mount path and Prism will crash. The deven
     # init skill is expected to overwrite this with the real backend spec.
     if printf '%s\n' "${payload}" | jq -e '.selections.tooling.prism' &>/dev/null; then
-        local spec_dst="${dest}/app/${prism_spec_path}"
+        local spec_dst="${dest}/${app_source_dir}/${prism_spec_path}"
         if [ ! -e "${spec_dst}" ]; then
             mkdir -p "$(dirname "${spec_dst}")"
             cat > "${spec_dst}" <<'PRISM_SPEC'
@@ -2048,7 +2077,7 @@ paths:
                   status: { type: string, example: ok }
                   stub:   { type: boolean, example: true }
 PRISM_SPEC
-            log "  Created app/${prism_spec_path} (Prism stub spec)" >&2
+            log "  Created ${app_source_dir}/${prism_spec_path} (Prism stub spec)" >&2
         fi
     fi
 

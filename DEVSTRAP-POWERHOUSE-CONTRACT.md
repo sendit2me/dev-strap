@@ -198,6 +198,33 @@ devstack.sh --bootstrap --config -
   `single`-selection categories have at most one item, `required` categories
   have at least one item, `overrides` keys exist in `defaults`.
 
+### Notable per-item override: `app.<item>.app_source`
+
+Every item under the `app` category exposes an `app_source` default of
+`"./app"`. PowerHouse may override it (e.g. `selections.app.go.overrides.app_source = "./backend"`)
+to relocate the application source tree relative to the generated product
+root. When set, dev-strap:
+
+1. Writes `APP_SOURCE=<override>` into the product's `project.env`
+   (instead of the default `./app`).
+2. Derives `APP_INIT_SCRIPT=<override>/init.sh` from the same value
+   (the two stay in sync — PowerHouse must not override `APP_INIT_SCRIPT`
+   independently; there is no such key).
+3. Routes the bootstrapped Dockerfile, app-source stubs, generated
+   `init.sh`, and any Prism / Swagger spec placeholders into
+   `<product>/<override>/` instead of `<product>/app/`.
+
+Validation rules for `app_source`:
+
+- Must be a non-empty string.
+- Must start with `./` (relative paths only — absolute paths are
+  rejected).
+- Must not contain `..` segments (rejected to prevent bind-mount
+  escapes when Docker Compose interpolates `${APP_SOURCE}`).
+
+Violations return `INVALID_OVERRIDE`. Omitting the override preserves
+existing behaviour exactly: `APP_SOURCE=./app`, stubs at `<product>/app/`.
+
 ---
 
 ## Bootstrap response
@@ -626,6 +653,36 @@ PowerHouse                                dev-strap
 ---
 
 ## Changelog
+
+### 2026-05-08 — `app_source` override (v1-compatible) — PENDING PowerHouse mirror
+
+Additive. Existing PowerHouse integrations continue to work without modification.
+
+> **Status: pending bilateral confirmation.** This change was authored on
+> the dev-strap side to support a deven-driven `app_source=./backend`
+> override. It is fully backwards-compatible and PowerHouse integrations
+> that don't send the override behave identically. The contract change
+> is awaiting mirror to PowerHouse repo + acknowledgement before
+> promotion to "locked v1." See DEVSTRAP-DEVEN-CONTRACT.md (clause B)
+> for the deven-side use case.
+
+**New default on existing items:**
+- All `app` items now include `app_source` (default: `"./app"`). Overriding it
+  via `selections.app.<item>.overrides.app_source` relocates the application
+  source tree in the generated product. `APP_INIT_SCRIPT` is derived from the
+  same value (`<app_source>/init.sh`) and follows automatically. See
+  "Notable per-item override: `app.<item>.app_source`" under Operation 2.
+
+**New validation:**
+- `INVALID_OVERRIDE` — fired when `app_source` is empty, doesn't start with
+  `./`, or contains `..` path segments.
+
+**Migration notes for PowerHouse:**
+- Backwards-compatible: omitting the override preserves the prior
+  `APP_SOURCE=./app` behaviour exactly.
+- Useful for callers (e.g. deven) that prefer a different on-disk layout
+  (`./backend` rather than `./app`) — replaces post-bootstrap `project.env`
+  patching.
 
 ### 2026-03-20 — Catalog Expansion (v1-compatible)
 

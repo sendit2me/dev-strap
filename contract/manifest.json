@@ -64,27 +64,27 @@
         "node-express": {
           "label": "Node.js (Express)",
           "description": "Express API with hot reload",
-          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
+          "defaults": { "port": 3000, "app_source": "./app", "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "php-laravel": {
           "label": "PHP (Laravel)",
           "description": "Laravel with PHP-FPM (port 9000 is internal FastCGI, not host-exposed)",
-          "defaults": { "port": 9000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
+          "defaults": { "port": 9000, "app_source": "./app", "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "go": {
           "label": "Go",
           "description": "Go module with Air live reload",
-          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
+          "defaults": { "port": 3000, "app_source": "./app", "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "python-fastapi": {
           "label": "Python (FastAPI)",
           "description": "FastAPI with uvicorn hot reload",
-          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
+          "defaults": { "port": 3000, "app_source": "./app", "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         },
         "rust": {
           "label": "Rust",
           "description": "Rust with cargo-watch live reload",
-          "defaults": { "port": 3000, "redis_url": "", "nats_url": "", "s3_endpoint": "" }
+          "defaults": { "port": 3000, "app_source": "./app", "redis_url": "", "nats_url": "", "s3_endpoint": "" }
         }
       }
     },
